@@ -1,0 +1,32 @@
+{
+  "clap": {
+    "by_category": {
+      "conceptual": 19,
+      "config": 2,
+      "error_handling": 2,
+      "exact_symbol": 14,
+      "rendering": 3
+    },
+    "cat_top1": {
+      "conceptual": 5,
+      "exact_symbol": 7
+    },
+    "cat_top3": {
+      "conceptual": 7,
+      "exact_symbol": 10,
+      "rendering": 1
+    },
+    "cat_top5": {
+      "conceptual": 9,
+      "config": 1,
+      "exact_symbol": 12,
+      "rendering": 1
+    },
+    "chunks": 6391,
+    "label": "clap-rs/clap (Rust CLI argument parser)",
+    "query_count": 40,
+    "top1": 12,
+    "top3": 18,
+    "top5": 23
+  }
+}

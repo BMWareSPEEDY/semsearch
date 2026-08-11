@@ -1,0 +1,17 @@
+# Binary
+/semsearch
+
+# Generated indices
+/.semsearch/
+
+# Scratch models (large; downloaded locally)
+/scratch/model/
+/scratch/code_minilm/
+/scratch/code_model/
+/scratch/codebert_model/
+/scratch/qwen_model/
+/scratch/qwen3_embed/
+/scratch/cross_encoder/
+
+# Eval repos (cloned third-party source; not part of this repo)
+/scratch/external_eval/
