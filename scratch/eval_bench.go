@@ -31,6 +31,7 @@ var benchRepos = []BenchRepo{
 	{Key: "cobra", Label: "spf13/cobra (Go CLI framework)", Dir: "scratch/external_eval/cobra", Cases: cobraCases},
 	{Key: "mux", Label: "gorilla/mux (Go HTTP router)", Dir: "scratch/external_eval/mux", Cases: muxCases},
 	{Key: "clap", Label: "clap-rs/clap (Rust CLI argument parser)", Dir: "scratch/external_eval/clap", Cases: clapCases},
+	{Key: "hugo", Label: "gohugoio/hugo (Go static site generator)", Dir: "scratch/external_eval/hugo", Cases: hugoCases},
 }
 
 func main() {

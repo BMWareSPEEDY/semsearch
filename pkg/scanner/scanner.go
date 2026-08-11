@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,6 +123,14 @@ func (fs *FileScanner) Scan() ([]string, error) {
 			return nil
 		}
 
+		if isBinaryFile(path) {
+			return nil
+		}
+
+		if isMinifiedFile(path) {
+			return nil
+		}
+
 		for _, matcher := range fs.ignores {
 			if matcher.Match(filepath.Join(fs.rootDir, relPath), false) {
 				return nil
@@ -132,4 +142,53 @@ func (fs *FileScanner) Scan() ([]string, error) {
 	})
 
 	return files, err
+}
+
+// isBinaryFile reports whether the first bytes of the file look like binary
+// data. Binary content with a source-like extension (e.g. a PNG renamed to
+// .js) would otherwise be handed to the tree-sitter AST chunker, which can
+// take pathological amounts of time trying to recover. A NUL byte in the
+// first few KB is a strong signal of non-text content.
+func isBinaryFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	buf := make([]byte, 4096)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return false
+	}
+	for _, b := range buf[:n] {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// isMinifiedFile reports whether a text file is a minified bundle (e.g. a
+// production JS/CSS asset) by checking for a very long line. Minified bundles
+// are low-information for semantic search and their many near-identical chunks
+// can dominate and pollute search results. A single line above 20KB chars is a
+// strong signal.
+func isMinifiedFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	reader := bufio.NewReaderSize(f, 64*1024)
+	for {
+		line, err := reader.ReadSlice('\n')
+		if len(line) > 20*1024 {
+			return true
+		}
+		if err != nil {
+			return false
+		}
+	}
 }

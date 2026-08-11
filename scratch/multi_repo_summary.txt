@@ -1,6 +1,6 @@
 SEMSEARCH MULTI-REPO EVALUATION  (CodeMiniLM 384-dim, code-only, cosine top-5)
 ====================================================================================
-Generated: 2026-08-11
+Generated: 2026-08-11  (run 2 — includes scanner binary/minified fixes)
 
 Summary (top-5 hit rate = relevant file found in top 5 results):
 
@@ -10,31 +10,41 @@ Summary (top-5 hit rate = relevant file found in top 5 results):
   spf13/cobra           447        27    19/27     22/27     22/27   (81.5%)
   gorilla/mux           160        25     7/25     16/25     21/25   (84.0%)
   clap-rs/clap         6391        40    12/40     18/40     23/40   (57.5%)
+  gohugoio/hugo       10847        39     8/39     15/39     17/39   (43.6%)
   -----------------------------------------------------------------
-  TOTAL                          134    61/134    86/134    100/134   (74.6% top-5)
+  TOTAL                          173    69/173    101/173    117/173   (67.6% top-5)
 
 Notes
 - All indices are code-only (evaluated with codeOnly=true). LLM description
   vectors do not affect these numbers.
-- gin/cobra/mux indexed WITH LLM descriptions (qwen3.5:0.8b); clap indexed
-  with --no-llm (code-only). Eval is identical either way (codeOnly=true).
+- gin/cobra/mux indexed WITH LLM descriptions (qwen3.5:0.8b); clap and hugo
+  indexed with --no-llm. Eval is identical either way (codeOnly=true).
 - Query mix: conceptual / exact_symbol / error_handling / request_pipeline /
   rendering / config. Exact-symbol queries hit ~90%+ top-3 on Go repos;
   conceptual semantic queries are harder.
+- hugo is the hardest case: 10.8K chunks incl. markdown docs + testdata.
+  Minified JS bundles were polluting results until the scanner fix
+  (isBinaryFile/isMinifiedFile). See scratch/FINDINGS.md.
 - openai/codex was attempted as the "large" repo but indexing the full
   monorepo (6107 files, 2994 .rs) projected to ~4.4h for chunk extraction
   (tree-sitter .ts schemas) and LLM desc generation was network-bound for
   34K chunks. See scratch/codex_indexing_log.md.
 
-Per-repo detail
-- gin 42 queries: 16 conceptual (12 top-5), 13 exact_symbol (13 top-5),
-  4 request_pipeline (4 top-5), 4 rendering (2 top-5), 3 config (2 top-5),
-  2 error_handling (1 top-5)
-- cobra 27 queries: 10 conceptual (6), 10 exact_symbol (9), 3 config (3),
-  2 error_handling (2), 2 rendering (2)
-- mux 25 queries: 10 conceptual (7), 11 exact_symbol (10), 2 error_handling (2),
-  2 request_pipeline (2)
-- clap 40 queries: 19 conceptual (9), 14 exact_symbol (12), 2 error_handling (0),
-  3 rendering (1), 2 config (1)
+Index timing (this machine, --no-llm)
+- clap (6391 chunks, 330 .rs): ~1m15s
+- hugo (10847 chunks, 906 .go + docs): ~4m51s
 
-Full per-query results: scratch/multi_repo_results.json
+Per-repo detail (run 2)
+- gin: conceptual 12/16, exact_symbol 13/13, request_pipeline 4/4,
+  rendering 2/4, config 2/3, error_handling 1/2
+- cobra: conceptual 6/10, exact_symbol 9/10, config 3/3, error_handling 2/2,
+  rendering 2/2
+- mux: conceptual 7/10, exact_symbol 10/11, request_pipeline 2/2,
+  error_handling 2/2
+- clap: conceptual 9/19, exact_symbol 12/14, error_handling 0/2,
+  rendering 1/3, config 1/2
+- hugo: conceptual 7/21, exact_symbol 8/11, error_handling 1/2,
+  rendering 1/2, config 0/3
+
+Full per-query results: scratch/logs/multi_repo_eval_run2.txt,
+scratch/multi_repo_results.json

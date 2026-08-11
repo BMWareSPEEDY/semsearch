@@ -1,0 +1,16 @@
+=== go build ===
+BUILD OK
+
+=== go vet ===
+VET OK
+
+=== go test ./pkg/... ./internal/... (count=1) ===
+ok  	github.com/ashishpaliwal/semsearch/pkg/chunker	0.095s
+?   	github.com/ashishpaliwal/semsearch/pkg/embedder	[no test files]
+?   	github.com/ashishpaliwal/semsearch/pkg/history	[no test files]
+ok  	github.com/ashishpaliwal/semsearch/pkg/indexer	0.096s
+ok  	github.com/ashishpaliwal/semsearch/pkg/llm	0.115s
+?   	github.com/ashishpaliwal/semsearch/pkg/reranker	[no test files]
+ok  	github.com/ashishpaliwal/semsearch/pkg/scanner	0.071s
+?   	github.com/ashishpaliwal/semsearch/pkg/watcher	[no test files]
+ok  	github.com/ashishpaliwal/semsearch/internal/chunker	0.277s

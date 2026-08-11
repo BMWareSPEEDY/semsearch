@@ -26,31 +26,49 @@ func GenerateDescriptions(ctx context.Context, client LLMClient, cache *Descript
 	var newDescs int64
 	available := client.IsAvailable()
 
+	// Group identical chunks (same ContentHash) so each unique piece of content
+	// is generated once per batch — this both avoids duplicate LLM calls and
+	// removes a race where two concurrent workers both miss the cache for the
+	// same hash and generate it twice.
+	unique := map[string][]int{}
+	var order []string
+	for i, ch := range chunks {
+		if skip(i) {
+			continue
+		}
+		if _, ok := unique[ch.ContentHash]; !ok {
+			order = append(order, ch.ContentHash)
+		}
+		unique[ch.ContentHash] = append(unique[ch.ContentHash], i)
+	}
+
 	var wg sync.WaitGroup
-	jobs := make(chan int)
+	jobs := make(chan string)
 
 	worker := func() {
 		defer wg.Done()
-		for i := range jobs {
-			if skip(i) {
-				continue
-			}
-			if cached, ok := cache.Get(chunks[i].ContentHash); ok {
-				descs[i] = cached
+		for hash := range jobs {
+			indices := unique[hash]
+			if cached, ok := cache.Get(hash); ok {
+				for _, i := range indices {
+					descs[i] = cached
+				}
 				continue
 			}
 			if !available {
 				continue
 			}
-			generated, err := GenerateDescription(ctx, client, chunks[i])
+			generated, err := GenerateDescription(ctx, client, chunks[indices[0]])
 			if err != nil {
 				continue
 			}
 			if generated == "" {
 				continue
 			}
-			descs[i] = generated
-			cache.Put(chunks[i].ContentHash, generated)
+			for _, i := range indices {
+				descs[i] = generated
+			}
+			cache.Put(hash, generated)
 			atomic.AddInt64(&newDescs, 1)
 		}
 	}
@@ -59,8 +77,8 @@ func GenerateDescriptions(ctx context.Context, client LLMClient, cache *Descript
 		wg.Add(1)
 		go worker()
 	}
-	for i := range chunks {
-		jobs <- i
+	for _, hash := range order {
+		jobs <- hash
 	}
 	close(jobs)
 	wg.Wait()

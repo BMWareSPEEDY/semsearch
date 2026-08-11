@@ -1,0 +1,228 @@
+==============================================================
+  SEMSEARCH MULTI-REPO EVALUATION (CodeMiniLM, code-only)
+==============================================================
+
+>>> gin-gonic/gin (Go web framework)  (856 chunks, 42 queries)
+  [TOP-3] conceptual     "where is the HTTP request router tree matching logic" -> tree.go
+  [TOP-1] conceptual     "how to handle JSON body binding and validation errors" -> binding/json.go
+  [TOP-1] conceptual     "recovering from panics and printing stack trace middleware" -> recovery.go
+  [TOP-3] conceptual     "writing colored HTTP access logs to stdout or file" -> logger.go
+  [TOP-5] conceptual     "parsing multiparts file upload and saving to disk" -> context.go
+  [FAIL] conceptual     "cross origin resource sharing CORS header settings" -> mode.go
+  [TOP-1] conceptual     "where do we render HTML templates and static files" -> render/html.go
+  [FAIL] conceptual     "serving static assets and directory index files" -> fs.go
+  [TOP-1] conceptual     "setting response cookie with security attributes" -> context.go
+  [FAIL] conceptual     "how to abort request pipeline processing early" -> context.go
+  [TOP-2] conceptual     "where are custom validator tag rules registered" -> binding/default_validator.go
+  [TOP-1] conceptual     "protobuf protocol buffer response rendering" -> render/protobuf.go
+  [TOP-1] conceptual     "YAML payload request binding validator" -> binding/yaml.go
+  [FAIL] conceptual     "how to redirect incoming HTTP request to another URL" -> context.go
+  [TOP-1] conceptual     "where is gin release mode debug mode configured" -> mode.go
+  [TOP-1] conceptual     "validating incoming form field values against struct tags" -> binding/form_mapping.go
+  [TOP-1] exact_symbol   "Engine struct definition" -> gin.go
+  [TOP-1] exact_symbol   "Context struct definition" -> context.go
+  [TOP-2] exact_symbol   "func (engine *Engine) Run" -> gin.go
+  [TOP-1] exact_symbol   "func (c *Context) JSON" -> context.go
+  [TOP-1] exact_symbol   "func (c *Context) BindJSON" -> context.go
+  [TOP-1] exact_symbol   "type HandlerFunc func(*Context)" -> gin.go
+  [TOP-1] exact_symbol   "func RecoveryWithWriter" -> recovery.go
+  [TOP-1] exact_symbol   "func LoggerWithConfig" -> logger.go
+  [TOP-1] exact_symbol   "type RouterGroup struct" -> routergroup.go
+  [TOP-1] exact_symbol   "func (group *RouterGroup) GET" -> routergroup.go
+  [TOP-1] exact_symbol   "func (c *Context) Abort" -> context.go
+  [TOP-1] exact_symbol   "func Default() *Engine" -> gin.go
+  [TOP-1] exact_symbol   "func (engine *Engine) Use" -> gin.go
+  [FAIL] error_handling "collecting and rendering multiple request errors as a JSON payload" -> errors.go
+  [TOP-5] error_handling "aborting the handler chain and writing an error status immediately" -> context.go
+  [TOP-3] request_pipeline "reading the raw request body bytes before binding" -> context.go
+  [TOP-2] request_pipeline "sending the response header and status exactly once" -> response_writer.go
+  [TOP-3] request_pipeline "checking whether the client has aborted the connection mid-request" -> context.go
+  [TOP-4] request_pipeline "hijacking the underlying connection for raw websocket streaming" -> response_writer.go
+  [TOP-1] rendering      "rendering XML responses from Go structs" -> render/xml.go
+  [TOP-5] rendering      "sending a file download as an inline attachment" -> context.go
+  [FAIL] rendering      "rendering responses with pretty-printed indented JSON" -> context.go
+  [FAIL] rendering      "returning raw binary bytes with a custom content type" -> render/data.go
+  [TOP-1] config         "creating the engine preloaded with logger and recovery middleware" -> gin.go
+  [TOP-1] config         "configuring trusted proxy headers to preserve the client IP" -> gin.go
+  [FAIL] config         "turning off debug log noise when running tests" -> mode.go
+
+  gin SUMMARY:
+    conceptual       top1=8/16 top3=11/16 top5=12/16
+    config           top1=2/3 top3=2/3 top5=2/3
+    error_handling   top1=0/2 top3=0/2 top5=1/2
+    exact_symbol     top1=12/13 top3=13/13 top5=13/13
+    rendering        top1=1/4 top3=1/4 top5=2/4
+    request_pipeline top1=0/4 top3=3/4 top5=4/4
+    TOTAL            top1=23/42 top3=30/42 top5=34/42
+
+>>> spf13/cobra (Go CLI framework)  (447 chunks, 27 queries)
+  [FAIL] conceptual     "building a root command for a command line application" -> cobra.go
+  [FAIL] conceptual     "parsing command line arguments into positional values" -> args.go
+  [TOP-1] conceptual     "grouping related flags into a named group for display" -> flag_groups.go
+  [TOP-1] conceptual     "generating shell autocompletion for bash zsh fish" -> completions.go
+  [FAIL] conceptual     "showing an error when the wrong number of arguments is passed" -> args.go
+  [TOP-1] conceptual     "adding subcommands to build a nested command tree" -> command.go
+  [TOP-1] conceptual     "executing the selected command and running its handlers" -> command.go
+  [TOP-3] conceptual     "defining flags inherited by every subcommand" -> command.go
+  [FAIL] conceptual     "custom handling when a flag is passed incorrectly" -> command.go
+  [TOP-1] conceptual     "suggesting similar commands when the user types a typo" -> command.go
+  [FAIL] exact_symbol   "type Command struct" -> cobra.go
+  [TOP-1] exact_symbol   "func (c *Command) Execute" -> command.go
+  [TOP-1] exact_symbol   "func (c *Command) AddCommand" -> command.go
+  [TOP-1] exact_symbol   "func (c *Command) PersistentFlags" -> command.go
+  [TOP-2] exact_symbol   "func (c *Command) Flags" -> command.go
+  [TOP-1] exact_symbol   "func (c *Command) SetHelpFunc" -> command.go
+  [TOP-1] exact_symbol   "func (c *Command) InitDefaultCompletionCmd" -> completions.go
+  [TOP-1] exact_symbol   "func (c *Command) Run" -> command.go
+  [TOP-3] exact_symbol   "type Args" -> args.go
+  [TOP-1] exact_symbol   "func (c *Command) Find" -> command.go
+  [TOP-1] error_handling "propagating command execution errors to the caller" -> command.go
+  [TOP-1] error_handling "returning a friendly error for an unknown subcommand" -> command.go
+  [TOP-1] rendering      "rendering the usage text from a custom template" -> command.go
+  [TOP-1] rendering      "formatting the help text shown for a command" -> command.go
+  [TOP-1] config         "setting a custom help command for the CLI" -> command.go
+  [TOP-1] config         "embedding version information reported by the command" -> command.go
+  [TOP-1] config         "redirecting command output to a custom writer" -> command.go
+
+  cobra SUMMARY:
+    conceptual       top1=5/10 top3=6/10 top5=6/10
+    config           top1=3/3 top3=3/3 top5=3/3
+    error_handling   top1=2/2 top3=2/2 top5=2/2
+    exact_symbol     top1=7/10 top3=9/10 top5=9/10
+    rendering        top1=2/2 top3=2/2 top5=2/2
+    TOTAL            top1=19/27 top3=22/27 top5=22/27
+
+>>> gorilla/mux (Go HTTP router)  (160 chunks, 25 queries)
+  [TOP-4] conceptual     "matching incoming requests against registered route patterns" -> mux.go
+  [FAIL] conceptual     "extracting named variables from url path segments" -> route.go
+  [TOP-3] conceptual     "restricting a route to specific http methods" -> route.go
+  [FAIL] conceptual     "matching routes by the request host name" -> route.go
+  [TOP-5] conceptual     "adding middleware that runs before route handlers" -> middleware.go
+  [TOP-5] conceptual     "building nested route groups with a shared path prefix" -> route.go
+  [TOP-4] conceptual     "matching on query string parameter pairs" -> route.go
+  [TOP-1] conceptual     "redirecting trailing slash requests to the canonical path" -> mux.go
+  [FAIL] conceptual     "matching route paths using regular expressions" -> route.go
+  [TOP-2] conceptual     "registering a simple handler function for a path" -> route.go
+  [TOP-1] exact_symbol   "func NewRouter" -> mux.go
+  [TOP-3] exact_symbol   "type Router struct" -> mux.go
+  [TOP-1] exact_symbol   "func (r *Router) ServeHTTP" -> mux.go
+  [TOP-2] exact_symbol   "func (r *Router) StrictSlash" -> mux.go
+  [TOP-1] exact_symbol   "func (r *Router) Walk" -> mux.go
+  [TOP-3] exact_symbol   "type Route struct" -> route.go
+  [TOP-2] exact_symbol   "func (r *Route) Methods" -> route.go
+  [TOP-2] exact_symbol   "func (r *Route) Path" -> route.go
+  [TOP-2] exact_symbol   "func (r *Route) Subrouter" -> route.go
+  [TOP-1] exact_symbol   "func CORSMethodMiddleware" -> middleware.go
+  [FAIL] exact_symbol   "func (r *Router) Use" -> middleware.go
+  [TOP-1] request_pipeline "applying middleware to a single route only" -> route.go
+  [TOP-5] request_pipeline "chaining middleware across the whole router" -> middleware.go
+  [TOP-2] error_handling "detecting when no registered route matches a request" -> mux.go
+  [TOP-1] error_handling "capturing route match errors for debugging" -> route.go
+
+  mux SUMMARY:
+    conceptual       top1=1/10 top3=3/10 top5=7/10
+    error_handling   top1=1/2 top3=2/2 top5=2/2
+    exact_symbol     top1=4/11 top3=10/11 top5=10/11
+    request_pipeline top1=1/2 top3=1/2 top5=2/2
+    TOTAL            top1=7/25 top3=16/25 top5=21/25
+
+>>> clap-rs/clap (Rust CLI argument parser)  (6391 chunks, 40 queries)
+  [FAIL] conceptual     "declaring a subcommand on a command" -> clap_builder/src/builder/command.rs
+  [FAIL] conceptual     "registering a positional argument on a command" -> clap_builder/src/builder/arg.rs
+  [FAIL] conceptual     "defining a short and long flag for an option" -> clap_builder/src/builder/arg.rs
+  [TOP-1] conceptual     "parsing the command line into matches" -> clap_builder/src/builder/command.rs
+  [TOP-2] conceptual     "fallible parsing of arguments into matches" -> clap_builder/src/builder/command.rs
+  [FAIL] conceptual     "grouping arguments so at least one must be present" -> clap_builder/src/builder/arg_group.rs
+  [TOP-4] conceptual     "validating that required arguments were supplied" -> clap_builder/src/parser/validator.rs
+  [FAIL] conceptual     "checking for conflicting arguments during validation" -> clap_builder/src/parser/validator.rs
+  [TOP-1] conceptual     "attaching a help string to an argument" -> clap_builder/src/builder/arg.rs
+  [TOP-1] conceptual     "setting a default value for a missing argument" -> clap_builder/src/builder/arg.rs
+  [FAIL] conceptual     "specifying how many values an argument takes" -> clap_builder/src/builder/arg.rs
+  [TOP-3] conceptual     "parsing an argument value with a custom parser" -> clap_builder/src/builder/value_parser.rs
+  [TOP-1] conceptual     "rendering the help text template for a command" -> clap_builder/src/output/help_template.rs
+  [TOP-4] conceptual     "generating the usage line for a command" -> clap_builder/src/output/usage.rs
+  [FAIL] conceptual     "mapping a parsing failure to an error kind" -> clap_builder/src/error/kind.rs
+  [TOP-1] conceptual     "short name aliases for an argument" -> clap_builder/src/builder/arg.rs
+  [FAIL] conceptual     "deriving a subcommand enum from a rust enum" -> clap_derive/src/derives/subcommand.rs
+  [FAIL] conceptual     "generating shell completion scripts for a command" -> clap_complete/src/lib.rs
+  [FAIL] conceptual     "lexing short flag clusters like -abc" -> clap_lex/src/lib.rs
+  [FAIL] exact_symbol   "pub fn subcommand" -> clap_builder/src/builder/command.rs
+  [TOP-1] exact_symbol   "pub fn short" -> clap_builder/src/builder/arg.rs
+  [TOP-1] exact_symbol   "pub fn long" -> clap_builder/src/builder/arg.rs
+  [TOP-1] exact_symbol   "pub fn required" -> clap_builder/src/builder/arg.rs
+  [TOP-1] exact_symbol   "pub fn default_value" -> clap_builder/src/builder/arg.rs
+  [TOP-1] exact_symbol   "pub fn num_args" -> clap_builder/src/builder/arg.rs
+  [TOP-1] exact_symbol   "pub fn action" -> clap_builder/src/builder/arg.rs
+  [FAIL] exact_symbol   "pub enum ErrorKind" -> clap_builder/src/error/kind.rs
+  [TOP-2] exact_symbol   "struct ArgGroup" -> clap_builder/src/builder/arg_group.rs
+  [TOP-2] exact_symbol   "pub fn validate_required" -> clap_builder/src/parser/validator.rs
+  [TOP-2] exact_symbol   "pub fn group" -> clap_builder/src/builder/command.rs
+  [TOP-1] exact_symbol   "struct ValueParser" -> clap_builder/src/builder/value_parser.rs
+  [TOP-5] exact_symbol   "pub fn version" -> clap_builder/src/builder/command.rs
+  [TOP-5] exact_symbol   "pub fn about" -> clap_builder/src/builder/command.rs
+  [FAIL] error_handling "returning a clap error when parsing fails" -> clap_builder/src/error
+  [FAIL] error_handling "formatting an error message for display" -> clap_builder/src/error/format.rs
+  [FAIL] rendering      "writing colored help output with styling" -> clap_builder/src/builder/styling.rs
+  [TOP-2] rendering      "wrapping help text to fit terminal width" -> clap_builder/src/output/textwrap
+  [FAIL] rendering      "printing help and version on demand" -> clap_builder/src/output/help.rs
+  [TOP-4] config         "enabling an application setting flag" -> clap_builder/src/builder/app_settings.rs
+  [FAIL] config         "requiring a subcommand to be chosen" -> clap_builder/src/builder/command.rs
+
+  clap SUMMARY:
+    conceptual       top1=5/19 top3=7/19 top5=9/19
+    config           top1=0/2 top3=0/2 top5=1/2
+    error_handling   top1=0/2 top3=0/2 top5=0/2
+    exact_symbol     top1=7/14 top3=10/14 top5=12/14
+    rendering        top1=0/3 top3=1/3 top5=1/3
+    TOTAL            top1=12/40 top3=18/40 top5=23/40
+
+>>> gohugoio/hugo (Go static site generator)  (10847 chunks, 39 queries)
+  [TOP-4] conceptual     "building the set of hugo sites from configuration" -> hugolib/site.go
+  [TOP-2] conceptual     "rendering the site to its output files" -> hugolib/site_render.go
+  [FAIL] conceptual     "rendering a page template for a content page" -> hugolib/page__content.go
+  [FAIL] conceptual     "expanding shortcodes inside markdown content" -> hugolib/shortcode.go
+  [FAIL] conceptual     "discovering content files on disk" -> hugolib/content_factory.go
+  [TOP-1] conceptual     "building the in-memory content tree of pages" -> hugolib/content_map_page.go
+  [FAIL] conceptual     "attaching output format metadata to a page" -> output/output_format.go
+  [TOP-3] conceptual     "converting markdown content to html" -> markup/goldmark/convert.go
+  [TOP-2] conceptual     "rendering markdown link and image hooks" -> markup/goldmark/render_hooks.go
+  [FAIL] conceptual     "building the table of contents for a page" -> markup/goldmark/toc.go
+  [FAIL] conceptual     "minifying css and js output assets" -> minifiers/minifiers.go
+  [TOP-1] conceptual     "collecting html elements during publish" -> publisher/htmlElementsCollector.go
+  [FAIL] conceptual     "publishing rendered pages to disk" -> publisher/publisher.go
+  [FAIL] conceptual     "iterating over a collection of pages" -> tpl/collections/index.go
+  [FAIL] conceptual     "appending values to a slice in templates" -> tpl/collections/append.go
+  [FAIL] conceptual     "parsing command line flags for the hugo binary" -> commands/commands.go
+  [FAIL] conceptual     "handling the hugo serve command with hot reload" -> commands/hugobuilder.go
+  [FAIL] conceptual     "loading configuration from files into the runtime" -> config/config.go
+  [FAIL] conceptual     "caching transformed resources on disk" -> resources/resource_cache.go
+  [TOP-2] conceptual     "processing an image resource through the image pipeline" -> resources/image.go
+  [FAIL] conceptual     "resolving the templates available for a site" -> tpl/templates/templates.go
+  [TOP-1] exact_symbol   "func NewHugoSites" -> hugolib/site.go
+  [TOP-1] exact_symbol   "func (h *HugoSites) isRebuild" -> hugolib/hugo_sites.go
+  [TOP-1] exact_symbol   "func (h *HugoSites) Build" -> hugolib/hugo_sites_build.go
+  [FAIL] exact_symbol   "type Page" -> resources/page/pages.go
+  [TOP-1] exact_symbol   "func (r *resourceSource) MarkStale" -> hugolib/content_map.go
+  [FAIL] exact_symbol   "type OutputFormat struct" -> output/outputFormat.go
+  [FAIL] exact_symbol   "func NewMinifier" -> minifiers/minifiers.go
+  [TOP-3] exact_symbol   "func (c *ResourceCache) GetOrCreate" -> resources/resource_cache.go
+  [TOP-1] exact_symbol   "func (h *HugoSites) Build" -> hugolib/hugo_sites_build.go
+  [TOP-1] exact_symbol   "func (m *pageMeta) newCachedContent" -> hugolib/page__content.go
+  [TOP-2] exact_symbol   "func (c *hugoBuilder) build" -> commands/hugobuilder.go
+  [TOP-4] error_handling "collecting build errors across multiple sites" -> hugolib/hugo_sites_build.go
+  [FAIL] error_handling "reporting a syntax error while converting markup" -> markup/goldmark/convert.go
+  [FAIL] rendering      "rendering html output for a page" -> hugolib/page__content.go
+  [TOP-2] rendering      "writing minified output assets to the publish dir" -> publisher/publisher.go
+  [FAIL] config         "applying default configuration values" -> config/config.go
+  [FAIL] config         "reading the site language configuration" -> config/config.go
+  [FAIL] config         "building the flag set for the hugo command" -> commands/commands.go
+
+  hugo SUMMARY:
+    conceptual       top1=2/21 top3=6/21 top5=7/21
+    config           top1=0/3 top3=0/3 top5=0/3
+    error_handling   top1=0/2 top3=0/2 top5=1/2
+    exact_symbol     top1=6/11 top3=8/11 top5=8/11
+    rendering        top1=0/2 top3=1/2 top5=1/2
+    TOTAL            top1=8/39 top3=15/39 top5=17/39
+
+wrote scratch/multi_repo_results.json
