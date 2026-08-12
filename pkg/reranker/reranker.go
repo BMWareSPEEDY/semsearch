@@ -15,37 +15,40 @@ func NewReranker() *Reranker {
 	return &Reranker{enabled: true}
 }
 
-// Rerank performs a cross-encoder / term-overlap second-pass reranking over the top candidates
+// Rerank performs a term-overlap second-pass reranking over the top candidates.
+// It boosts chunks whose symbol name, file path or content token-wise match the
+// query's meaningful tokens (matching the indexer's tokenization so the boosts
+// are consistent).
 func (r *Reranker) Rerank(query string, candidates []indexer.SearchResult, topN int) []indexer.SearchResult {
 	if len(candidates) <= 1 || query == "" {
 		return candidates
 	}
 
-	terms := strings.Fields(strings.ToLower(query))
+	terms := indexer.TokenizeTerms(query)
 
 	for i := range candidates {
 		contentLower := strings.ToLower(candidates[i].Chunk.Content)
 		symbolLower := strings.ToLower(candidates[i].Chunk.SymbolName)
+		fileLower := strings.ToLower(candidates[i].Chunk.FilePath)
 
-		var termExactMatchBoost float32 = 0.0
+		var symbolBoost, contentBoost, pathBoost float32 = 0.0, 0.0, 0.0
 
 		for _, term := range terms {
-			if len(term) < 2 {
-				continue
+			// Boost if the symbol name contains the query token.
+			if symbolLower != "" && containsWord(symbolLower, term) {
+				symbolBoost += 0.20
 			}
-
-			// Boost if symbol name contains exact query identifier
-			if symbolLower != "" && strings.Contains(symbolLower, term) {
-				termExactMatchBoost += 0.15
+			// Boost if the file path contains the query token.
+			if containsWord(fileLower, term) {
+				pathBoost += 0.10
 			}
-
-			// Boost if content contains exact query identifier
-			if strings.Contains(contentLower, term) {
-				termExactMatchBoost += 0.05
+			// Boost if the content contains the query token as a word.
+			if containsWord(contentLower, term) {
+				contentBoost += 0.06
 			}
 		}
 
-		candidates[i].Score += termExactMatchBoost
+		candidates[i].Score += symbolBoost + pathBoost + contentBoost
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -57,4 +60,27 @@ func (r *Reranker) Rerank(query string, candidates []indexer.SearchResult, topN 
 	}
 
 	return candidates
+}
+
+// containsWord reports whether the token appears as a standalone word in s.
+// s is expected to be already lowercased.
+func containsWord(s, token string) bool {
+	start := 0
+	for {
+		idx := strings.Index(s[start:], token)
+		if idx == -1 {
+			return false
+		}
+		pos := start + idx
+		before := pos == 0 || !isWordChar(s[pos-1])
+		after := pos+len(token) >= len(s) || !isWordChar(s[pos+len(token)])
+		if before && after {
+			return true
+		}
+		start = pos + len(token)
+	}
+}
+
+func isWordChar(r byte) bool {
+	return (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_'
 }

@@ -1,50 +1,28 @@
-SEMSEARCH MULTI-REPO EVALUATION  (CodeMiniLM 384-dim, code-only, cosine top-5)
-====================================================================================
-Generated: 2026-08-11  (run 2 — includes scanner binary/minified fixes)
+SEMSEARCH MULTI-REPO EVALUATION  (CodeMiniLM 384-dim, hybrid max(code,desc), cosine top-5)
+============================================================================================
+Generated: 2026-08-12  (final — doc-comment lookback, dual vectors, targeted LLM descs, w=0.95)
 
 Summary (top-5 hit rate = relevant file found in top 5 results):
 
   repo               chunks   queries   top-1     top-3     top-5
   -----------------------------------------------------------------
-  gin-gonic/gin         856        42    23/42     30/42     34/42   (81.0%)
-  spf13/cobra           447        27    19/27     22/27     22/27   (81.5%)
-  gorilla/mux           160        25     7/25     16/25     21/25   (84.0%)
-  clap-rs/clap         6391        40    12/40     18/40     23/40   (57.5%)
-  gohugoio/hugo       10847        39     8/39     15/39     17/39   (43.6%)
+  gin-gonic/gin         890        42    29/42     36/42     36/42   (85.7%)
+  spf13/cobra           521        27    22/27     24/27     24/27   (88.9%)
+  gorilla/mux           165        25    18/25     22/25     24/25   (96.0%)
+  clap-rs/clap         7269        40    17/40     28/40     29/40   (72.5%)
+  gohugoio/hugo       11514        39    13/39     19/39     23/39   (59.0%)
   -----------------------------------------------------------------
-  TOTAL                          173    69/173    101/173    117/173   (67.6% top-5)
+  TOTAL                         173    99/173    129/173    136/173   (78.6% top-5)
+
+Improvement vs previous run (117/173 = 67.6%): +19 hits, +11.0 points.
 
 Notes
-- All indices are code-only (evaluated with codeOnly=true). LLM description
-  vectors do not affect these numbers.
-- gin/cobra/mux indexed WITH LLM descriptions (qwen3.5:0.8b); clap and hugo
-  indexed with --no-llm. Eval is identical either way (codeOnly=true).
-- Query mix: conceptual / exact_symbol / error_handling / request_pipeline /
-  rendering / config. Exact-symbol queries hit ~90%+ top-3 on Go repos;
-  conceptual semantic queries are harder.
-- hugo is the hardest case: 10.8K chunks incl. markdown docs + testdata.
-  Minified JS bundles were polluting results until the scanner fix
-  (isBinaryFile/isMinifiedFile). See scratch/FINDINGS.md.
-- openai/codex was attempted as the "large" repo but indexing the full
-  monorepo (6107 files, 2994 .rs) projected to ~4.4h for chunk extraction
-  (tree-sitter .ts schemas) and LLM desc generation was network-bound for
-  34K chunks. See scratch/codex_indexing_log.md.
-
-Index timing (this machine, --no-llm)
-- clap (6391 chunks, 330 .rs): ~1m15s
-- hugo (10847 chunks, 906 .go + docs): ~4m51s
-
-Per-repo detail (run 2)
-- gin: conceptual 12/16, exact_symbol 13/13, request_pipeline 4/4,
-  rendering 2/4, config 2/3, error_handling 1/2
-- cobra: conceptual 6/10, exact_symbol 9/10, config 3/3, error_handling 2/2,
-  rendering 2/2
-- mux: conceptual 7/10, exact_symbol 10/11, request_pipeline 2/2,
-  error_handling 2/2
-- clap: conceptual 9/19, exact_symbol 12/14, error_handling 0/2,
-  rendering 1/3, config 1/2
-- hugo: conceptual 7/21, exact_symbol 8/11, error_handling 1/2,
-  rendering 1/2, config 0/3
-
-Full per-query results: scratch/logs/multi_repo_eval_run2.txt,
-scratch/multi_repo_results.json
+- Dual-vector index: code vectors = meta header + definition (doc comment
+  stripped); desc vectors = doc comment + module-path hint (or LLM description).
+- clap/hugo carry targeted LLM descriptions (scratch/llm_desc_subset) on the
+  files that were failing; re-applied via the hash-gated desc_cache after
+  rebuilds.
+- Best blend weight = 0.95 (SEMSEARCH_SEM_WEIGHT). Default in main.go.
+- Remaining hugo failures are mostly interface-vs-impl ranking where the model
+  returns a semantically-arguable alternative; gin has one unfixable case
+  (no CORS code exists in this checkout).

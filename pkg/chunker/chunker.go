@@ -60,7 +60,9 @@ func (c *DefaultChunker) ChunkFile(filePath string) ([]Chunk, error) {
 		return c.chunkMarkdown(filePath, lines)
 	}
 
-	if ext == ".go" || ext == ".py" || ext == ".pyi" || ext == ".js" || ext == ".jsx" || ext == ".ts" || ext == ".tsx" {
+	// Route tree-sitter supported languages through the AST chunker. It falls
+	// back to the sliding window internally for unparseable files.
+	if languageFromExtension(ext) != nil {
 		astChunker := NewASTChunker()
 		content, readErr := os.ReadFile(filePath)
 		if readErr == nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -207,9 +208,49 @@ func (s *IndexStore) HybridSearch(queryVector []float32, queryText string, topN 
 		return nil
 	}
 
+	// Allow tuning the fusion weight without recompiling callers.
+	if v := os.Getenv("SEMSEARCH_SEM_WEIGHT"); v != "" {
+		if parsed, err := strconv.ParseFloat(v, 32); err == nil && parsed >= 0 && parsed <= 1 {
+			semanticWeight = float32(parsed)
+		}
+	}
+	if v := os.Getenv("SEMSEARCH_FUSION"); v != "" {
+		return s.hybridSearchVariant(queryVector, queryText, topN, minScore, semanticWeight, codeOnly, docsOnly, v)
+	}
+
+	semanticScores, keywordScores, lexicalScores := s.computeAllScores(queryVector, queryText, codeOnly, docsOnly)
+
+	// 3. Blended Score
+	totalChunks := s.Manifest.TotalChunks
+	results := make([]SearchResult, 0, totalChunks)
+	for i := 0; i < totalChunks; i++ {
+		blendedScore := blendHybrid(semanticScores[i], keywordScores[i], lexicalScores[i], semanticWeight)
+
+		if blendedScore >= minScore {
+			results = append(results, SearchResult{
+				Chunk: s.Manifest.Chunks[i],
+				Score: blendedScore,
+			})
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > topN {
+		results = results[:topN]
+	}
+
+	return results
+}
+
+// computeAllScores returns semantic cosine scores plus the normalized BM25 and
+// lexical scores for every chunk. Reused by the fusion variants.
+func (s *IndexStore) computeAllScores(queryVector []float32, queryText string, codeOnly, docsOnly bool) ([]float32, []float32, []float32) {
 	dim := s.Manifest.VectorDimensions
 	totalChunks := s.Manifest.TotalChunks
-	queryTerms := strings.Fields(strings.ToLower(queryText))
+	queryTerms := TokenizeTerms(queryText)
 
 	// 1. Calculate Semantic Cosine Scores with Doc Gravitational Pull Dampening
 	semanticScores := make([]float32, totalChunks)
@@ -235,81 +276,309 @@ func (s *IndexStore) HybridSearch(queryVector []float32, queryText string, topN 
 		semanticScores[i] = scoreSemantic(queryVector, chunkVector, descVector)
 	}
 
-	// 2. Calculate Keyword BM25/TF-IDF Scores
+	// 2. Calculate Keyword BM25 scores (tokenized, stopword-filtered) plus
+	// lexical signal from symbol names and file paths.
 	keywordScores := make([]float32, totalChunks)
+	lexicalScores := make([]float32, totalChunks)
 	if len(queryTerms) > 0 {
-		docFreq := make(map[string]int)
-		for _, term := range queryTerms {
-			for i := 0; i < totalChunks; i++ {
-				rawContent := s.Manifest.Chunks[i].Content
-				// Strip structural metadata header comments for pure BM25 keyword scoring so exact matches are not diluted
-				if strings.HasPrefix(rawContent, "// [Package:") {
-					if idx := strings.Index(rawContent, "\n"); idx != -1 {
-						rawContent = rawContent[idx+1:]
-					}
-				}
+		keywordScores, lexicalScores = s.computeKeywordScores(queryTerms, totalChunks)
+	}
+	return semanticScores, keywordScores, lexicalScores
+}
 
-				if strings.Contains(strings.ToLower(rawContent), term) {
-					docFreq[term]++
-				}
-			}
-		}
+// hybridSearchVariant applies an alternative fusion strategy (used for tuning).
+// Strategies: "rrf" (reciprocal rank fusion over semantic + keyword rank),
+// "sem_first" (semantic primary, keyword as capped boost), "mult" (multiplicative).
+func (s *IndexStore) hybridSearchVariant(queryVector []float32, queryText string, topN int, minScore float32, semanticWeight float32, codeOnly, docsOnly bool, strategy string) []SearchResult {
+	totalChunks := s.Manifest.TotalChunks
+	sem, kw, lex := s.computeAllScores(queryVector, queryText, codeOnly, docsOnly)
+	final := make([]float32, totalChunks)
+	excluded := make([]bool, totalChunks)
 
+	switch strategy {
+	case "rrf":
+		// Reciprocal rank fusion over semantic rank and combined keyword rank.
+		semRank := rankIndices(sem)
+		kwRank := rankIndices(addSlices(kw, lex))
 		for i := 0; i < totalChunks; i++ {
-			rawContent := s.Manifest.Chunks[i].Content
-			if strings.HasPrefix(rawContent, "// [Package:") {
-				if idx := strings.Index(rawContent, "\n"); idx != -1 {
-					rawContent = rawContent[idx+1:]
-				}
+			if sem[i] < 0 {
+				final[i] = -1
+				excluded[i] = true
+				continue
 			}
-
-			contentLower := strings.ToLower(rawContent)
-			var tfidf float32 = 0.0
-			for _, term := range queryTerms {
-				tf := float32(strings.Count(contentLower, term))
-				if tf > 0 {
-					df := docFreq[term]
-					idf := float32(math.Log(float64(totalChunks+1) / float64(df+1)))
-					tfidf += tf * idf
-				}
-			}
-			keywordScores[i] = tfidf
+			final[i] = float32(1.0/float64(60+semRank[i]) + 1.0/float64(60+kwRank[i]))
 		}
-
-		// Normalize keyword scores to [0, 1] range
-		var maxKw float32 = 0.0001
-		for _, kw := range keywordScores {
-			if kw > maxKw {
-				maxKw = kw
-			}
-		}
+	case "mult":
 		for i := 0; i < totalChunks; i++ {
-			keywordScores[i] /= maxKw
+			if sem[i] < 0 {
+				final[i] = -1
+				excluded[i] = true
+				continue
+			}
+			// Semantic is primary; keyword acts as a multiplicative boost so it
+			// can only amplify, never override, a decent semantic match.
+			boost := 1.0 + 0.8*float64(kw[i]) + 0.6*float64(lex[i])
+			final[i] = float32(math.Max(0, float64(sem[i])) * boost)
 		}
+	case "avg":
+		for i := 0; i < totalChunks; i++ {
+			if sem[i] < 0 {
+				final[i] = -1
+				excluded[i] = true
+				continue
+			}
+			final[i] = 0.7*sem[i] + 0.3*kw[i]
+		}
+	default:
+		return s.HybridSearch(queryVector, queryText, topN, minScore, semanticWeight, codeOnly, docsOnly)
 	}
 
-	// 3. Reciprocal Rank Fusion / Blended Score
 	results := make([]SearchResult, 0, totalChunks)
 	for i := 0; i < totalChunks; i++ {
-		blendedScore := blendHybrid(semanticScores[i], keywordScores[i], semanticWeight)
-
-		if blendedScore >= minScore {
-			results = append(results, SearchResult{
-				Chunk: s.Manifest.Chunks[i],
-				Score: blendedScore,
-			})
+		if excluded[i] || final[i] < minScore {
+			continue
 		}
+		results = append(results, SearchResult{
+			Chunk: s.Manifest.Chunks[i],
+			Score: final[i],
+		})
 	}
-
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].Score > results[j].Score
 	})
-
 	if len(results) > topN {
 		results = results[:topN]
 	}
-
 	return results
+}
+
+func rankIndices(scores []float32) []int {
+	rank := make([]int, len(scores))
+	for i := range scores {
+		rank[i] = i
+	}
+	sort.Slice(rank, func(a, b int) bool {
+		if scores[rank[a]] == scores[rank[b]] {
+			return rank[a] < rank[b]
+		}
+		return scores[rank[a]] > scores[rank[b]]
+	})
+	out := make([]int, len(scores))
+	for pos, idx := range rank {
+		out[idx] = pos
+	}
+	return out
+}
+
+func addSlices(a, b []float32) []float32 {
+	out := make([]float32, len(a))
+	for i := range a {
+		out[i] = a[i] + b[i]
+	}
+	return out
+}
+
+// computeKeywordScores returns, per chunk, a normalized BM25 score over the
+// code content and a normalized lexical score combining symbol-name and
+// file-path term matches. Both are in [0,1].
+func (s *IndexStore) computeKeywordScores(queryTerms []string, totalChunks int) ([]float32, []float32) {
+	bm25Scores := make([]float32, totalChunks)
+	lexicalScores := make([]float32, totalChunks)
+
+	// Pre-tokenize each chunk once. contentTerms counts full matches in the
+	// raw body; headerTerms counts matches in the structural metadata header
+	// (which carries package/file/symbol context).
+	type chunkTokenData struct {
+		contentTerms map[string]int
+		headerTerms  map[string]int
+		pathTerms    map[string]int
+		tokenCount   int
+	}
+	data := make([]chunkTokenData, totalChunks)
+
+	// df counts chunks containing each term (in content OR header OR path).
+	df := make(map[string]int)
+	avgTokens := 0.0
+	tokenDocs := 0
+
+	for i := 0; i < totalChunks; i++ {
+		ch := &s.Manifest.Chunks[i]
+		raw := ch.Content
+
+		// Isolate the structural metadata header, if present.
+		var body string
+		headerTerms := map[string]int{}
+		if strings.HasPrefix(raw, "// [Package:") {
+			if idx := strings.Index(raw, "\n"); idx != -1 {
+				header := raw[:idx]
+				body = raw[idx+1:]
+				for _, t := range TokenizeTerms(header) {
+					headerTerms[t]++
+				}
+			} else {
+				body = raw
+			}
+		} else {
+			body = raw
+		}
+
+		contentTerms := map[string]int{}
+		for _, t := range TokenizeTerms(body) {
+			contentTerms[t]++
+		}
+
+		pathTerms := map[string]int{}
+		base := strings.ToLower(filepath.Base(ch.FilePath))
+		for _, t := range queryTerms {
+			if strings.Contains(base, t) {
+				pathTerms[t]++
+			}
+		}
+
+		combined := make(map[string]struct{}, len(contentTerms)+len(headerTerms)+len(pathTerms))
+		for t := range contentTerms {
+			combined[t] = struct{}{}
+		}
+		for t := range headerTerms {
+			combined[t] = struct{}{}
+		}
+		for t := range pathTerms {
+			combined[t] = struct{}{}
+		}
+
+		data[i] = chunkTokenData{
+			contentTerms: contentTerms,
+			headerTerms:  headerTerms,
+			pathTerms:    pathTerms,
+			tokenCount:   len(contentTerms),
+		}
+		for t := range combined {
+			df[t]++
+		}
+		avgTokens += float64(data[i].tokenCount)
+		tokenDocs++
+	}
+	if tokenDocs > 0 {
+		avgTokens /= float64(tokenDocs)
+	}
+
+	// BM25 with k1/b constants; header and path terms are weighted higher so an
+	// exact symbol or filename match outranks a scattered keyword coincidence.
+	// Term matching uses prefix leniency (positional~position, flags~flag) so
+	// natural-language query words still hit code/doc-comment words.
+	const k1 = 1.4
+	const b = 0.6
+	for i := 0; i < totalChunks; i++ {
+		td := data[i]
+		dl := float64(td.tokenCount)
+		if dl == 0 {
+			dl = 1
+		}
+		var score float64
+		var lexScore float64
+		for _, term := range queryTerms {
+			contentTf := countTermMatches(td.contentTerms, term)
+			headerTf := countTermMatches(td.headerTerms, term)
+			pathTf := float64(td.pathTerms[term])
+
+			if contentTf == 0 && headerTf == 0 && pathTf == 0 {
+				continue
+			}
+			docFreq := float64(df[term])
+			idf := math.Log((float64(totalChunks)-docFreq+0.5)/(docFreq+0.5) + 1.0)
+
+			// Weighted term frequency: header (symbol/pkg) terms dominate.
+			tfCombined := contentTf + 4.0*headerTf + 2.0*pathTf
+			denom := tfCombined + k1*(1-b+b*dl/avgTokens)
+			if denom <= 0 {
+				denom = 1
+			}
+			score += idf * (tfCombined * (k1 + 1)) / denom
+			lexScore += 3.0*headerTf + 2.0*pathTf + 0.5*contentTf
+		}
+		bm25Scores[i] = float32(score)
+		lexicalScores[i] = float32(lexScore)
+	}
+
+	// Normalize both to [0,1].
+	var maxBm25 float32 = 0.0001
+	var maxLex float32 = 0.0001
+	for i := 0; i < totalChunks; i++ {
+		if bm25Scores[i] > maxBm25 {
+			maxBm25 = bm25Scores[i]
+		}
+		if lexicalScores[i] > maxLex {
+			maxLex = lexicalScores[i]
+		}
+	}
+	for i := 0; i < totalChunks; i++ {
+		bm25Scores[i] /= maxBm25
+		lexicalScores[i] /= maxLex
+	}
+	return bm25Scores, lexicalScores
+}
+
+// countTermMatches returns the summed frequency of tokens that either equal the
+// query term or, for terms of length >= 4, share a long-enough prefix (so
+// "positional" matches "position", "flags" matches "flag"). Prefix leniency is
+// limited to avoid the noisy substring matches of the old implementation.
+func countTermMatches(tokens map[string]int, term string) float64 {
+	if tokens[term] > 0 {
+		return float64(tokens[term])
+	}
+	if len(term) < 4 {
+		return 0
+	}
+	var total float64
+	for tok, cnt := range tokens {
+		if len(tok) >= 4 {
+			if strings.HasPrefix(tok, term) || strings.HasPrefix(term, tok) {
+				total += float64(cnt) * 0.6
+			}
+		}
+	}
+	return total
+}
+
+// TokenizeTerms lowercases text and splits it into alphanumeric/underscore
+// tokens, dropping English stopwords and tokens shorter than 2 characters.
+func TokenizeTerms(s string) []string {
+	var terms []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() >= 2 && !isStopword(cur.String()) {
+			terms = append(terms, cur.String())
+		}
+		cur.Reset()
+	}
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			cur.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+	return terms
+}
+
+func isStopword(w string) bool {
+	switch w {
+	case "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "for",
+		"with", "at", "by", "from", "as", "is", "are", "was", "were", "be",
+		"been", "being", "do", "does", "did", "has", "have", "had", "how",
+		"where", "when", "why", "what", "which", "who", "whom", "this", "that",
+		"these", "those", "it", "its", "not", "no", "so", "such", "if", "then",
+		"than", "can", "could", "will", "would", "should", "may", "might",
+		"into", "over", "under", "between", "through", "during", "about",
+		"after", "before", "out", "up", "down", "off", "per", "via", "i", "we",
+		"you", "your", "they", "them", "there", "their", "here", "our", "my",
+		"am", "all", "any", "some", "more", "most", "other", "another",
+		"etc", "s", "please", "already", "become", "became", "upon",
+		"within", "without", "against", "because":
+		return true
+	}
+	return false
 }
 
 func cosineSimilaritySIMD(a, b []float32) float32 {
@@ -346,12 +615,14 @@ func ScoreChunk(queryVec []float32, chunk IndexedChunk, bm25Score float64) float
 	// take the max, not the average — a strong match on either axis is a real match
 	semanticScore := math.Max(float64(codeSim), float64(descSim))
 
-	return float64(blendHybrid(float32(semanticScore), float32(bm25Score), 0.6))
+	return float64(blendHybrid(float32(semanticScore), float32(bm25Score), 0, 0.6))
 }
 
-// blendHybrid combines semantic and BM25 keyword scores into a single ranking score.
-func blendHybrid(semanticScore, bm25Score float32, semanticWeight float32) float32 {
-	return (semanticWeight * semanticScore) + ((1.0 - semanticWeight) * bm25Score)
+// blendHybrid combines semantic, BM25 keyword and lexical signal scores into a
+// single ranking score. semanticWeight controls how much semantic similarity
+// matters relative to the keyword + lexical signals.
+func blendHybrid(semanticScore, bm25Score, lexicalScore float32, semanticWeight float32) float32 {
+	return (semanticWeight * semanticScore) + ((1.0 - semanticWeight) * (0.6*bm25Score + 0.4*lexicalScore))
 }
 
 // IndexedChunk is a chunk plus its two per-chunk embedding vectors (code + description).

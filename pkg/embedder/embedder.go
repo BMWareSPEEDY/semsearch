@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 
 	ort "github.com/yalue/onnxruntime_go"
@@ -154,10 +156,17 @@ func NewEmbedder(modelPath string, tokenizerJSON []byte) (*Embedder, error) {
 		dim = 1024
 	}
 
+	maxLen := 128
+	if v := os.Getenv("SEMSEARCH_MAX_LEN"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 32 && parsed <= 512 {
+			maxLen = parsed
+		}
+	}
+
 	return &Embedder{
 		tokenizer: tok,
 		modelPath: modelPath,
-		maxLen:    128,
+		maxLen:    maxLen,
 		dim:       dim,
 	}, nil
 }

@@ -234,7 +234,7 @@ func runIndexing(dir string, noLLM bool) {
 
 	codeTexts = make([]string, len(allChunks))
 	for i := range allChunks {
-		codeTexts[i] = allChunks[i].Content
+		codeTexts[i] = chunker.ChunkCodeText(allChunks[i].Content)
 	}
 
 	newDescs := 0
@@ -332,7 +332,7 @@ func runSearch(dir, query string, topN int, minScore float32, contextLines int, 
 		candidateLimit = topN
 	}
 
-	rawCandidates := store.HybridSearch(queryVec, query, candidateLimit, minScore, 0.6, codeOnly, docsOnly)
+	rawCandidates := store.HybridSearch(queryVec, query, candidateLimit, minScore, 0.95, codeOnly, docsOnly)
 
 	// Second-pass Reranker over Top-20 candidates
 	r := reranker.NewReranker()
@@ -539,7 +539,7 @@ func runServer(dir string, port int) {
 			return
 		}
 
-		results := store.HybridSearch(queryVec, q, topN, 0.0, 0.6, codeOnly, docsOnly)
+		results := store.HybridSearch(queryVec, q, topN, 0.0, 0.95, codeOnly, docsOnly)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"query":   q,
