@@ -40,6 +40,8 @@ var defaultIgnoredFiles = map[string]bool{
 	"pnpm-lock.yaml":    true,
 	"Cargo.lock":        true,
 	"poetry.lock":       true,
+	"desc_cache.json":   true,
+	"history.json":      true,
 }
 
 type FileScanner struct {

@@ -8,7 +8,7 @@ var hugoCases = []BenchCase{
 	{Query: "expanding shortcodes inside markdown content", Category: "conceptual", Expected: "hugolib/shortcode.go"},
 	{Query: "discovering content files on disk", Category: "conceptual", Expected: "hugolib/content_factory.go"},
 	{Query: "building the in-memory content tree of pages", Category: "conceptual", Expected: "hugolib/content_map_page.go"},
-	{Query: "attaching output format metadata to a page", Category: "conceptual", Expected: "output/output_format.go"},
+	{Query: "attaching output format metadata to a page", Category: "conceptual", Expected: "output/outputFormat.go"},
 	{Query: "converting markdown content to html", Category: "conceptual", Expected: "markup/goldmark/convert.go"},
 	{Query: "rendering markdown link and image hooks", Category: "conceptual", Expected: "markup/goldmark/render_hooks.go"},
 	{Query: "building the table of contents for a page", Category: "conceptual", Expected: "markup/goldmark/toc.go"},

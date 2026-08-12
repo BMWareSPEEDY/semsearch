@@ -594,6 +594,11 @@ func cosineSimilaritySIMD(a, b []float32) float32 {
 // legitimately match the code's literal structure (exact symbol) OR its described
 // purpose (conceptual); max lets each axis contribute independently instead of
 // diluting a strong match on one axis with a weak match on the other.
+//
+// Note: the codeOnly / docsOnly filters in HybridSearch gate the *file type*
+// (code chunks vs Markdown/doc chunks). They do NOT disable this desc-vector
+// blend, so code chunks in a "code-only" search still score against their
+// description vector when one exists.
 func scoreSemantic(queryVec, codeVec, descVec []float32) float32 {
 	codeSim := cosineSimilaritySIMD(queryVec, codeVec)
 	if descVec == nil {

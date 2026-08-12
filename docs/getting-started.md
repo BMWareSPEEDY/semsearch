@@ -49,7 +49,8 @@ The index is written to `.semsearch/` inside the target directory
 ## Indexing a large repo
 
 ```bash
-# Skip LLM description generation (fast, code-only search still works)
+# Skip LLM description generation (fast; description vectors fall back to
+# heuristic synthetic text, so results differ slightly from --llm indexes)
 ./semsearch index /path/to/repo --no-llm
 
 # Use local LLM descriptions (Ollama, qwen3.5:0.8b by default)

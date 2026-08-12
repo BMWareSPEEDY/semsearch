@@ -1,28 +1,15 @@
-SEMSEARCH MULTI-REPO EVALUATION  (CodeMiniLM 384-dim, hybrid max(code,desc), cosine top-5)
-============================================================================================
-Generated: 2026-08-12  (final — doc-comment lookback, dual vectors, targeted LLM descs, w=0.95)
-
-Summary (top-5 hit rate = relevant file found in top 5 results):
-
-  repo               chunks   queries   top-1     top-3     top-5
+SEMSEARCH MULTI-REPO EVALUATION (CodeMiniLM 384-dim, semantic weight 0.65, shortlist 30, per-file dedup reranker)
+  repo             chunks    queries    top1      top3      top5    (top5 %)
   -----------------------------------------------------------------
-  gin-gonic/gin         890        42    29/42     36/42     36/42   (85.7%)
-  spf13/cobra           521        27    22/27     24/27     24/27   (88.9%)
-  gorilla/mux           165        25    18/25     22/25     24/25   (96.0%)
-  clap-rs/clap         7269        40    17/40     28/40     29/40   (72.5%)
-  gohugoio/hugo       11514        39    13/39     19/39     23/39   (59.0%)
+  gin-gonic/gin        890        42    25/42     39/42     41/42   (97.6%)
+  spf13/cobra          521        27    20/27     22/27     25/27   (92.6%)
+  gorilla/mux          165        25    21/25     25/25     25/25   (100.0%)
+  clap-rs/clap        7256        40    11/40     22/40     30/40   (75.0%)
+  gohugoio/hugo      11514        39    12/39     18/39     26/39   (66.7%)
   -----------------------------------------------------------------
-  TOTAL                         173    99/173    129/173    136/173   (78.6% top-5)
+  TOTAL                         173    89/173    126/173    147/173   (85.0% top-5)
 
-Improvement vs previous run (117/173 = 67.6%): +19 hits, +11.0 points.
-
-Notes
-- Dual-vector index: code vectors = meta header + definition (doc comment
-  stripped); desc vectors = doc comment + module-path hint (or LLM description).
-- clap/hugo carry targeted LLM descriptions (scratch/llm_desc_subset) on the
-  files that were failing; re-applied via the hash-gated desc_cache after
-  rebuilds.
-- Best blend weight = 0.95 (SEMSEARCH_SEM_WEIGHT). Default in main.go.
-- Remaining hugo failures are mostly interface-vs-impl ranking where the model
-  returns a semantically-arguable alternative; gin has one unfixable case
-  (no CORS code exists in this checkout).
+Context: reranker overhaul (per-file dedup + tuned boosts SYM=0.10/PATW=0.0/CONT=0.01)
+recovered the accuracy lost to the LLM index rebuilds; honest post-rebuild baseline
+was 136/173. gin has one unfixable case (no CORS code in checkout). hugo/clap
+remaining misses are interface-vs-impl ranking and docs-chunk dilution.

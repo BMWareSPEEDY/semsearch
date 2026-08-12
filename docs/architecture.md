@@ -41,8 +41,10 @@ semsearch/
 ### Searching
 1. Embed the query with the search_query prefix.
 2. Brute-force cosine similarity over all vectors (SIMD), fused with a small
-   lexical/semantic weighting.
-3. Rerank top-N (e.g. top-20 → top-5).
+   lexical/semantic weighting (semantic weight 0.65 by default).
+3. Rerank top-30 → top-5 (`pkg/reranker`): collapse to the best chunk per
+   file, then apply tuned symbol/path/content term-overlap boosts
+   (`SYM=0.10`, `PATW=0`, `CONT=0.01`).
 4. Present file:line ranges; optionally open in an editor.
 
 ## LLM descriptions (optional)
@@ -51,14 +53,21 @@ semsearch/
 lines by default) via a local Ollama model (`qwen3.5:0.8b`). Generation is
 concurrent (`SEMSEARCH_LLM_CONCURRENCY`, default 4) and hash-gated through a
 per-index cache (`.semsearch/desc_cache.json`), so re-indexing only describes
-changed chunks. Description vectors help conceptual queries but are optional —
-`--no-llm` skips them and code-only search is unaffected.
+changed chunks. Description vectors help conceptual queries; `--no-llm` skips
+the LLM and falls back to heuristic synthetic descriptions instead. Note that
+`codeOnly` / `docsOnly` filters search by **file type** (Markdown/doc chunks
+versus code chunks) and does not disable description-vector similarity — code
+chunks are still scored with `max(codeSim, descSim)` from whichever
+description vectors the index contains.
 
 ## Key design choices
 
-- **Code-only baseline first**: dual vectors (code + desc) stored, but search
-  and eval can filter to code-only. This makes `--no-llm` indexes fully
-  comparable in eval.
+- **Code-only filtering is by file type, not vector source**: dual vectors
+  (code + desc) are stored, and `codeOnly` excludes Markdown/doc chunks from
+  search while still applying description-vector similarity (`max(code, desc)`)
+  to code chunks. This means the LLM description axis is always active for code
+  regardless of the `codeOnly`/`docsOnly` filter, and `--no-llm` (synthetic
+  descriptions) is a distinct index variant rather than an equivalent one.
 - **Flat vector store**: no ANN index yet; search is O(n) per query, fine for
   hundreds of thousands of chunks, slow at millions.
 - **Structural metadata prefix**: prepending package/file/symbol context to

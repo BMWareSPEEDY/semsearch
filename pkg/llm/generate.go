@@ -11,7 +11,8 @@ import (
 // GenerateDescriptions fills descriptions for chunks in order, one LLM call per
 // chunk (temperature 0) with hash-gated cache reuse. Chunks for which skip is
 // true get an empty description and no LLM call — the caller decides how to
-// handle those (e.g. reuse the code vector so max-blend degenerates to code-only).
+// handle those (the index path reuses the code vector so max-blend degenerates
+// to plain code similarity for small/trivial chunks).
 //
 // Generation runs on a small worker pool (concurrency > 1 is safe: the cache is
 // mutex-guarded and each worker writes to its own slice slot). Index-time only;

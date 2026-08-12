@@ -326,13 +326,13 @@ func runSearch(dir, query string, topN int, minScore float32, contextLines int, 
 		log.Fatalf("Failed to embed query: %v", err)
 	}
 
-	// Candidate shortlist size (Top 20 candidate retrieval for reranking pass)
-	candidateLimit := 20
+	// Candidate shortlist size (Top 30 candidate retrieval for reranking pass)
+	candidateLimit := 30
 	if topN > candidateLimit {
 		candidateLimit = topN
 	}
 
-	rawCandidates := store.HybridSearch(queryVec, query, candidateLimit, minScore, 0.95, codeOnly, docsOnly)
+	rawCandidates := store.HybridSearch(queryVec, query, candidateLimit, minScore, 0.65, codeOnly, docsOnly)
 
 	// Second-pass Reranker over Top-20 candidates
 	r := reranker.NewReranker()

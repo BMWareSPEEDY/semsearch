@@ -54,15 +54,25 @@ go run scratch/eval_bench.go \
 
 For each case it:
 1. Embeds the query with CodeMiniLM (384-dim) at `scratch/code_minilm/`.
-2. Runs `HybridSearch(..., codeOnly=true)` (top 20 raw, semantic weight 0.6).
-3. Reranks to top-5.
+2. Runs `HybridSearch(..., codeOnly=true)` (top 30 raw, semantic weight 0.65).
+3. Reranks to top-5 (per-file dedup + tuned term-overlap boosts).
 4. Marks hit if `Expected` is a suffix/substring of the result file path.
 5. Aggregates per-category and overall top-1/3/5, writes
    `scratch/multi_repo_results.json` and prints to stdout.
 
-**Important:** the eval is code-only. LLM description vectors are not used for
-scoring, so `--no-llm` indices produce identical eval numbers while indexing
-much faster.
+**Important:** the eval runs with `codeOnly=true`, which **filters the result
+set by file type** — Markdown/doc chunks are excluded. It does **not** disable
+description-vector similarity: code chunks are still scored with the
+max-blend `max(codeSim, descSim)`, so LLM description vectors are used for
+code chunks whenever the index has them.
+
+Consequently `--no-llm` indices do **not** produce identical eval numbers —
+with `--no-llm` every chunk receives a heuristic *synthetic* description whose
+vectors differ from both the code vector and an LLM description. `--no-llm` is
+simply a faster, dependency-free indexing path; the source of the description
+vectors is a separate axis from the `codeOnly` file-type filter. To reproduce
+eval numbers exactly, use the same indexing mode that produced the index you
+are measuring.
 
 ## Timing
 
@@ -85,5 +95,8 @@ network-bound.
   search (`--code-only`) improves exact-symbol hits.
 - Exact-symbol queries are the strongest category; conceptual phrases that
   don't lexically overlap code are the weakest.
+- Overall top-5 across the 5 repos (after index rebuilds) is ~85% (147/173)
+  with the tuned reranker (`SYM=0.10`, `PATW=0.0`, `CONT=0.01`, per-file
+  dedup, shortlist 30, semantic weight 0.65).
 
 See `scratch/FINDINGS.md` for the full "works / doesn't work" analysis.

@@ -6,62 +6,49 @@ Repos evaluated: gin, cobra, mux, clap, hugo (scratch/external_eval/*)
 
 ## Headline
 
-After this session's changes, top-5 hit rate across all 5 repos went from
-**117/173 (67.6%) → 136/173 (78.6%)** at semantic weight 0.95.
+After the reranker overhaul (per-file dedup + tuned term-overlap boosts +
+re-balanced retrieval params), top-5 hit rate across all 5 repos is
+**147/173 (85.0%)** at semantic weight 0.65, shortlist 30.
 
-| repo            | baseline | final  | notes                                        |
-|-----------------|----------|--------|----------------------------------------------|
-| gin-gonic/gin   |  34/42   | 36/42  | 2 remaining: bogus CORS case + JSON near-miss|
-| spf13/cobra     |  22/27   | 24/27  |                                              |
-| gorilla/mux     |  21/25   | 24/25  |                                              |
-| clap-rs/clap    |  23/40   | 29/40  | big win from LLM descs on builder/parser files|
-| gohugoio/hugo   |  17/39   | 23/39  | doc-comment lookback + LLM descs on target files |
+| repo            | before | after | notes                                      |
+|-----------------|--------|-------|---------------------------------------------|
+| gin-gonic/gin   |  41/42 | 41/42 | only remaining: bogus CORS case             |
+| spf13/cobra     |  24/27 | 25/27 |                                             |
+| gorilla/mux     |  24/25 | 25/25 | 100%                                       |
+| clap-rs/clap    |  29/40 | 30/40 |                                     |
+| gohugoio/hugo   |  23/39 | 26/39 | +3 from per-file dedup vs ranking           |
 
-## What worked (this session)
+## What got us here (this session)
 
-1. **Doc-comment lookback in the AST chunker** (pkg/chunker/ast_chunker.go):
-   each definition chunk now starts at the doc comment above the symbol
-   (capped at 100 lines, stops at blank lines / code). For Go repos with
-   short doc comments this is a clear win (gin 34→37, mux 21→24).
-   Problematic alone on Rust clap (huge `///` docs push the fn signature out
-   of the 128-token window), fixed by #2.
-2. **Separate code vs description vector content** (ChunkCodeText + synthetic
-   descs in pkg/chunker/synthetic_desc.go): the code vector embeds
-   `meta header + definition body` (doc comment stripped) so the fn signature
-   is never truncated away; the description vector embeds the doc comment
-   (plus a repo-relative module path hint). Semantic score = max(code, desc).
-3. **Module-path hint in descriptions**: `hugolib/site_render.go — doc...`
-   Module names (`minifiers/`, `goldmark/`, `resource_cache/`) carry the exact
-   terms users search for; putting them at the FRONT of the desc survives the
-   128-token truncation. Restored hugo to baseline (had regressed to 13 when
-   the hint was dropped).
-4. **LLM descriptions on targeted files** (scratch/llm_desc_subset, Ollama
-   qwen3.5:0.8b, hash-gated cache): generating descs only for the failing
-   files lifted clap 25→29 and hugo 20→23. ~3s/desc means full-repo LLM descs
-   are too slow (hugo ~12.5K chunks ≈ 60+ min) — targeted is the right tool.
-   NOTE: re-ranking is volatile; LLM descs on clap's command.rs/value_parser.rs
-   actually *hurt* (29→28) because the rebalance displaced previously-correct
-   chunks, so those were reverted.
-5. **Emit-time dedup of anonymous inner nodes** (Go `struct_type` under
-   `type_spec`): removed ~1K duplicate line-range chunks in hugo (12.5K→11.5K).
-6. **Semantic weight 0.95** as the best blend (sweep 0.6–1.0); made it the
-   default in main.go. `SEMSEARCH_SEM_WEIGHT` env still overrides; `SEMSEARCH_FUSION`
-   (rrf/mult/avg) tested and worse than linear at this weight.
+1. **Per-file dedup in the second pass** (`pkg/reranker`): collapse the
+   shortlist to the best-scoring chunk per file *before* applying term
+   boosts. Same-file chunk crowding (e.g. `range.rs` taking raw#1,#3,#4) no
+   longer pushes the true target out of top-5. This is the single biggest
+   lever: 136→145 raw baseline on the rebuilt LLM indexes, and it removed
+   every demotion at the tuned config.  (env override `MFD=0` to disable)
+2. **Rebalanced term-overlap boosts**: `SYM` 0.20→0.10, `PATW` 0.10→0.0,
+   `CONT` 0.06→0.01. The old additive boosts rewarded common words
+   ("short", "values", "templates") in unrelated files and demoted strong
+   raw candidates; smaller weights fix promotion-vs-demotion balance.
+3. **Retrieval params re-tuned**: semantic weight 0.95→0.65 and shortlist
+   20→30 (main.go). On the rebuilt LLM indexes w=0.65 sl=30 is the clean-grid
+   best; w=0.95 was tuned against the pre-rebuild data.
 
-## What does NOT work / is at ceiling
+## Historical context (important)
 
-- **hugo conceptual queries**: remaining failures are cases where the model
-  returns arguably-correct alternatives (e.g. `resources/page/page.go`
-  interfaces instead of `hugolib/page__content.go` impl). The expected file
-  isn't always the best semantic match; only a much stronger English model
-  would resolve these.
-- **gin CORS case** is unfixable: this gin checkout has NO CORS code at all
-  (users use gin-contrib/cors); `mode.go` contains no headers.
-- **exact-symbol near-misses** (`type Page` → pages.go ranked top-2) are model
-  discrimination limits, not retrieval failures.
+- The original baseline (145/173) and the 146/147 stability results were
+  measured against an LLM-built clap index that **contained a stray
+  `desc_cache.json` artifact indexed as code**. That artifact was removed and
+  all repos re-indexed; the honest post-rebuild baseline is **136/173**.
+- Index rebuilds regenerate LLM description vectors non-deterministically
+  (qwen3.5), so absolute numbers from pre-rebuild runs are not reproducible.
+- Current tuning was locked on the clean, rebuilt indexes: 136 → 147 (+11).
 
-## Fixes from earlier sessions (retained)
-- pkg/scanner/scanner.go: isBinaryFile (NUL-byte sniff) + isMinifiedFile
-  (line > 20KB) skip files before chunking.
-- AST chunker rewritten on official tree-sitter bindings (was smacker wrapper);
-  Rust `///`-only files no longer hang; huge impl/class containers skipped.
+## Remaining failures (26)
+
+- hugo: interface-vs-impl ranking (target often rank #2 semantic alt),
+  docs/testdata chunks, and "site language configuration" / "flag set"
+  config cases.
+- clap: concept queries that lexically overlap only one of many similar
+  builder files.
+- gin: one unfixable case (no CORS code exists in this checkout).

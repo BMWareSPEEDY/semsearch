@@ -78,7 +78,14 @@ func main() {
 			if err != nil {
 				continue
 			}
-			raw := store.HybridSearch(qv, tc.Query, 20, 0.0, 0.6, true, false)
+			w, sl := 0.6, 20
+			if v := os.Getenv("W"); v != "" {
+				fmt.Sscanf(v, "%f", &w)
+			}
+			if v := os.Getenv("SL"); v != "" {
+				fmt.Sscanf(v, "%d", &sl)
+			}
+			raw := store.HybridSearch(qv, tc.Query, sl, 0.0, float32(w), true, false)
 			res := r.Rerank(tc.Query, raw, 5)
 			hit := -1
 			for k, rr := range res {
