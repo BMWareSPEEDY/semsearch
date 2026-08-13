@@ -91,14 +91,17 @@ network-bound.
 ## Reading the results
 
 - Small Go repos: 98–100% top-5 (cobra and mux are perfect).
-- Large mixed repo (hugo): 82% top-5 — degraded by docs + testdata chunks
+- Large mixed repo (hugo): 79% top-5 — degraded by docs + testdata chunks
   relative to the small repos, but code-only search (`--code-only`) improves
   exact-symbol hits.
 - Exact-symbol queries are the strongest category; conceptual phrases that
   don't lexically overlap code are the weakest.
-- Overall top-5 across the 5 repos (after index rebuilds) is 156/173 (90.2%)
+- Overall top-5 across the 5 repos (after index rebuilds) is 155/173 (89.6%)
   with the tuned reranker (`SYM=0.10`, `PATW=0.0`, `CONT=0.01`, per-file
-  dedup `MFD=1` + v4 `MFD=2`, shortlist 30, semantic weight 0.65).
+  dedup `MFD=1` + v4 `MFD=2`, shortlist 30, semantic weight 0.65). Recent runs
+  have measured 155–156/173; the ±1 is LLM-description-vector nondeterminism
+  on borderline conceptual cases (hugo has measured 31 and 32 of 39), not a
+  ranking regression.
 
 ### About the v4 jump (147/173 → 156/173)
 
@@ -111,5 +114,15 @@ remaining gain came from a new reranker parity mode (`MFD=2`) that keeps only
 the best chunk per file in the final ordering. Earlier numbers (e.g. "81–84%",
 "44%" for hugo) predate these label corrections and should not be cited against
 the current eval config.
+
+### v5: performance, not ranking
+
+The v5 commit was a pure optimization pass. Its keyword-statistics cache was
+verified to be ranking-neutral with `scratch/ab_verify.go`, which runs the old
+(non-cached) keyword path against the new one and diffs the top-N results —
+they are byte-for-byte identical. The eval harness re-run after v5 therefore
+measures the same quality; the 156 → 155 movement in the summary is the
+±1 drift described above. Performance numbers from the v5 harness are in the
+README's "Performance" section and raw in `scratch/perf_report.json`.
 
 See `scratch/FINDINGS.md` for the full "works / doesn't work" analysis.

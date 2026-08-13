@@ -76,7 +76,16 @@ description vectors the index contains.
 
 ## Scalability notes
 
-- Chunk extraction is single-threaded; very large monorepos index slowly.
+- Chunk extraction is parallel (bounded worker pool, default `min(CPU, 8)`,
+  capped at 64, results merged back in scan order so chunk IDs are
+  deterministic). Embedding and LLM description generation are still the
+  bottleneck for very large monorepos.
+- Keyword statistics (tokens / document frequency / average length for BM25)
+  are computed lazily once per index load and cached, so query cost is not
+  re-paying tokenization of the whole index.
+- Embedding batches are exact-size (never padded with stale rows); batch size
+  is tunable via `SEMSEARCH_BATCH_SIZE` (default 32, 16 for models with dim >
+  512).
 - LLM description generation is network-bound on Ollama.
 - For large repos: prefer `--no-llm` and index target subdirectories. See
   `scratch/codex_indexing_log.md` for a real-world failure case and the

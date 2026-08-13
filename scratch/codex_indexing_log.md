@@ -3,6 +3,12 @@
 Date: 2026-08-11
 Status: ABANDONED — pivoted to a medium-size repo (clap-rs/clap) for the multi-repo eval.
 
+> Pipeline note (2026-08-13): this log describes the pipeline as of 2026-08-11.
+> v5 (2026-08-13) made chunk extraction parallel (bounded worker pool), so the
+> single-threaded bottleneck described in Attempt 1 below has changed — the
+> failure mode (hundreds of 20K+-line generated schema files, boundary `rs`
+> subprocess memory) and the mitigation advice still hold for large monorepos.
+
 ## Why codex was chosen
 The eval needed one "large" repo to test indexer scaling. openai/codex is a
 large, popular, real-world Rust monorepo (the AI coding agent).

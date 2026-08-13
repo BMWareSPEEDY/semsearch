@@ -5,15 +5,18 @@ SEMSEARCH MULTI-REPO EVALUATION (CodeMiniLM 384-dim, semantic weight 0.65, short
   spf13/cobra          521        27    22/27     24/27     27/27   (100.0%)
   gorilla/mux          165        25    21/25     25/25     25/25   (100.0%)
   clap-rs/clap        7256        40    11/40     22/40     31/40   (77.5%)
-  gohugoio/hugo      11514        39    16/39     25/39     32/39   (82.1%)
+  gohugoio/hugo      11514        39    16/39     25/39     31/39   (79.5%)
   -----------------------------------------------------------------
-  TOTAL                         173    95/173    135/173    156/173   (90.2% top-5)
+  TOTAL                         173    95/173    135/173    155/173   (89.6% top-5)
 
 Context: v4 corrected 8 eval ground-truth labels that pointed at wrong or aggregate
 files (cobra -> command.go; hugo -> commandeer.go, server.go, configLoader.go,
 defaultConfigProvider.go, langs/config.go, page__per_output.go; clap ->
 aot/generator/mod.rs) and added reranker MFD=2 (keep best chunk per file in the
 final ordering). Previous honest baseline was 136/173; v3 tuning brought it to
-147/173; v4 data corrections + MFD=2 brought it to 156/173. Remaining 17 misses:
+147/173; v4 data corrections + MFD=2 brought it to 156/173; v5 (performance-only,
+rankings bit-identical per scratch/ab_verify.go) re-measured 155/173 -- the
+one-case hugo drop is LLM-description nondeterminism, not a ranking change.
+Remaining 18 misses:
 gin CORS (no such code in checkout), hugo interface-vs-impl ranking and docs-chunk
 dilution, clap builder-file overlap.

@@ -4,7 +4,7 @@ This file records how semsearch's search accuracy is tuned and how to reproduce
 every number. Update it whenever the reranker, retrieval weights, or eval
 config change. It is the source of truth for "why is the accuracy what it is".
 
-## Current Production Tuning (v4)
+## Current Production Tuning (v4/v5)
 
 Hardcoded defaults in `main.go` and `pkg/reranker/reranker.go`:
 
@@ -27,8 +27,12 @@ Hardcoded defaults in `main.go` and `pkg/reranker/reranker.go`:
 | + per-file dedup (MFD=1)        | 145   | removes same-file chunk crowding   |
 | + rebalanced boosts (v3 final)  | 147   | SYM=0.10 PATW=0 CONT=0.01          |
 | + v4 (corrected labels + MFD=2) | 156   | ground-truth fixes + final-order dedup |
+| + v5 (performance only)        | 155   | rankings bit-identical (ab_verify); -1 = hugo desc drift |
 
-Per-repo (v4): gin 41/42, cobra 27/27, mux 25/25, clap 31/40, hugo 32/39.
+Per-repo (v5): gin 41/42, cobra 27/27, mux 25/25, clap 31/40, hugo 31/39
+(v4 measured hugo at 32/39 on a regenerated description index). v5 changed
+no ranking code — the keyword-statistics cache is byte-for-byte parity
+(`scratch/ab_verify.go`); treat the total as 155–156/173 (±1).
 Run: `eval_bench.go` with env `W=0.65 SL=30`.
 
 ## Reproducing the eval
@@ -45,8 +49,8 @@ W=0.65 SL=30 go run scratch/eval_bench.go \
 IMPORTANT: LLM description vectors are generated non-deterministically
 (qwen3.5, temperature 0 but upstream nondeterminism). Re-indexing a repo
 regenerates desc vectors and can shift absolute numbers by ±1–3. Treat
-"156/173" as the number on *these* particular index files; always re-confirm
-after any reindex. Code vectors and eval cases are deterministic.
+"155–156/173" as the number on *these* particular index files; always
+re-confirm after any reindex. Code vectors and eval cases are deterministic.
 
 ## Pitfalls learned (do not repeat)
 

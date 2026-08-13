@@ -62,8 +62,8 @@ Measured with the CodeMiniLM 384-dim model, semantic weight 0.65, and the tuned 
 | spf13/cobra     | 521    | 27      | 22/27   | 24/27   | 27/27 (100%) |
 | gorilla/mux     | 165    | 25      | 21/25   | 25/25   | 25/25 (100%) |
 | clap-rs/clap    | 7,256  | 40      | 11/40   | 22/40   | 31/40 (78%) |
-| gohugoio/hugo   | 11,514 | 39      | 16/39   | 25/39   | 32/39 (82%) |
-| **total**       |        | **173** | 95/173  | 135/173 | **156/173 (90%)** |
+| gohugoio/hugo   | 11,514 | 39      | 16/39   | 25/39   | 31/39 (79%) |
+| **total**       |        | **173** | 95/173  | 135/173 | **155/173 (90%)** |
 
 A few honest observations:
 
@@ -71,9 +71,35 @@ A few honest observations:
 - **Conceptual queries are the weakest** — those that don't lexically overlap any code or docstring are where it still misses.
 - **Small, focused repos hit 100%.** cobra and gorilla/mux are now perfect at top-5.
 - **A note on the jump from 85% to 90%:** some of that gain is a *methodology* fix, not pure ranking improvement. A pass over the test set found eight "expected answer" labels that pointed at the wrong or aggregate file — for example, cobra's `Command` struct lives in `command.go`, not the top-level `cobra.go` wrapper. Those labels were corrected (the queries were right; the ground truth wasn't). The rest came from a new reranker parity mode that keeps only the best chunk per file in the final ordering. Both are worth stating plainly: eval numbers only mean something when the ground truth is actually correct.
-- One of the 17 remaining misses is literally unfixable: a gin "CORS middleware" query whose answer doesn't exist in that checkout.
+- **The numbers move ±1 between runs.** Description vectors come from an LLM, so a reindex can let one or two borderline conceptual cases drift in or out of the top results (hugo's counts have varied between 31 and 32 of 39 across re-runs on identical labels). The table reflects the latest measured run; treat totals as ~90% ± 1, not a fixed constant.
+- One of the 18 remaining misses is literally unfixable: a gin "CORS middleware" query whose answer doesn't exist in that checkout.
 
 The full methodology and the complete "works / doesn't work" writeup are in `docs/evaluation.md` and `scratch/FINDINGS.md`.
+
+---
+
+## Performance
+
+v5 is the performance release. It was a pure optimization pass: the search rankings were verified byte-for-byte identical to v4 (`scratch/ab_verify.go` runs the old keyword path against the new one and diffs the results), so every number here is a speedup with *zero* quality trade-off. Measured with the perf harness (`scratch/perf_bench.go`) on an Apple M1 Pro (10-core, 16 GB):
+
+| repo           | index load | query embed | query search | end-to-end query | cold first query* |
+|----------------|------------|-------------|--------------|------------------|-------------------|
+| gin (0.8K chunks)  | ~12ms  | ~46ms | ~2ms  | ~51ms | ~108ms |
+| cobra (0.5K)       | ~7ms   | ~46ms | ~2ms  | ~48ms | ~56ms  |
+| gorilla/mux (0.2K) | ~4ms   | ~46ms | ~1ms  | ~45ms | ~53ms  |
+| clap (7.2K)        | ~82ms  | ~46ms | ~14ms | ~61ms | ~135ms |
+| hugo (11.5K)       | ~129ms | ~46ms | ~26ms | ~71ms | ~218ms |
+
+\* First query after process start, including model-load warm-up (~180ms total embedder initialization).
+
+What moved the numbers:
+
+- **Exact-size embedding batches.** Embedding is batched for tokenizer efficiency, but a padded batch could re-read stale rows and produce NaN chunks. Batches are now exactly the size of the pending items, which made single queries land at ~45ms and bulk indexing at roughly 5ms per document (the previously reported ~250ms-per-query path is gone).
+- **Lazy keyword-statistics cache.** The BM25 keyword half used to re-tokenize and recount every indexed chunk on every query. Statistics are now computed once per index load and reused; a query into hugo (11,500 chunks) searches in ~26ms and clap (7,200 chunks) in ~14ms.
+- **Deterministic parallel chunk extraction.** Chunking now runs on a bounded worker pool (default: min(CPU count, 8), capped at 64) with the results merged back in scan order — chunk IDs are identical whether extraction is parallel or serial. This mostly speeds up indexing big trees, where tree-sitter was the bottleneck.
+- **Single-pass file scanning.** The file-type, NUL-binary, and minified-line checks now happen in one read instead of opening each file multiple times; the `.git` filesystem is also skipped in one pass instead of re-walked.
+
+A full run of the eval harness (load five repos + 173 queries) takes ~10s wall time and peaks around 288 MB RSS in a single process. The machinery for reproducing this — and for A/B-ing the next change you make — lives in `scratch/` (`perf_bench.go` for latency/RSS, `ab_verify.go` to prove rankings didn't change). See `scratch/perf_report.json` and `scratch/logs/*.log` for the raw measurements.
 
 ---
 
@@ -87,7 +113,7 @@ The full methodology and the complete "works / doesn't work" writeup are in `doc
 
 ## Status
 
-Actively developed. The core loop — index, search, serve, watch — is stable and covered by unit tests (`go test ./pkg/...`). Development so far has moved in four visible milestones: v1 shipped the full scan → chunk → embed → search pipeline; v2 overhauled semantic recall (doc-comment chunking, dual code/description vectors, targeted LLM descriptions); v3 added per-file dedup and a rebalanced reranker that lifted eval accuracy to 85% top-5; v4 corrected eight wrong eval ground-truth labels, added a reranker parity mode for per-file dedup in the final ordering, and brought eval accuracy to 156/173 (90%) top-5 across the five eval repos.
+Actively developed. The core loop — index, search, serve, watch — is stable and covered by unit tests (`go test ./pkg/...`). Development so far has moved in five visible milestones: v1 shipped the full scan → chunk → embed → search pipeline; v2 overhauled semantic recall (doc-comment chunking, dual code/description vectors, targeted LLM descriptions); v3 added per-file dedup and a rebalanced reranker that lifted eval accuracy to 85% top-5; v4 corrected eight wrong eval ground-truth labels, added a reranker parity mode for per-file dedup in the final ordering, and brought eval accuracy to 156/173 (90%) top-5 across the five eval repos; v5 was a performance release — batched embedding with exact-size batches, a lazy keyword-statistics cache, deterministic parallel chunk extraction, and single-pass file scanning — that kept the same search quality (rankings bit-identical, re-measured at 155/173 due to the ±1 LLM-description drift noted above).
 
 The `scratch/` directory contains the evaluation harness and experiment code — it's a working notebook, not a library, and it's largely gitignored. It's kept because it's genuinely useful for reproducing benchmark numbers.
 
@@ -265,6 +291,8 @@ Everything is tunable through environment variables; there is no config file.
 | `SEMSEARCH_LLM_CONCURRENCY` | `4` | Parallel LLM description workers |
 | `SEMSEARCH_MIN_DESC_LINES` | `30` | Only chunks with at least this many lines get an LLM description |
 | `SEMSEARCH_MAX_LEN` | `128` | Tokenizer max sequence length (32–512) |
+| `SEMSEARCH_BATCH_SIZE` | `32` (`16` for models with dim > 512) | Embedder batch size (1–512) |
+| `SEMSEARCH_CHUNK_WORKERS` | `min(CPU count, 8)`, max `64` | Parallel chunk-extraction workers (1–64) |
 | `SEMSEARCH_SEM_WEIGHT` | `0.65` | Weight of semantic similarity vs. keyword signal in ranking (CLI) |
 | `SEMSEARCH_FUSION` | *(unset)* | Alternative fusion strategies for experimentation: `rrf`, `mult`, `avg` |
 
@@ -296,7 +324,7 @@ The three pieces that matter most, and why:
 
 Being honest about where it's rough:
 
-- **Very large monorepos index slowly.** Chunk extraction is single-threaded. Use `--no-llm` and index target subdirectories rather than the whole tree.
+- **Very large monorepos still index slowly.** Chunk extraction is now parallel, but description generation (when enabled) and embedding dominate, so indexing hundreds of thousands of files takes a while. Use `--no-llm` and index target subdirectories rather than the whole tree.
 - **Large mixed doc+code indexes have lower conceptual recall.** At 10K+ chunks (e.g. hugo), documentation and testdata chunks crowd out code results. `--code-only` helps; the eval numbers in the table above are the honest picture.
 - **Conceptual queries that share no words with the code are the hardest case.** The description vectors close most of the gap but not all of it.
 - **Small local model by design.** CodeMiniLM (384-dim) keeps everything fast and CPU-friendly; it's deliberately not a frontier model.
@@ -313,7 +341,7 @@ Ideas that are deferred but natural next steps:
 - **Editor integration** (a VS Code extension that just calls the local API).
 - **Multi-repo / cross-project search.**
 - **ANN indexing** (HNSW) for very large codebases.
-- **Incremental chunking** — the watcher re-embeds changed files, but initial chunk extraction itself is single-threaded.
+- **Model swap for the LLM description step** — the description vectors are the strongest lever on conceptual recall, but they depend on a local Ollama server and a small model.
 
 ---
 

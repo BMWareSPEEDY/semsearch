@@ -8,16 +8,17 @@ Repos evaluated: gin, cobra, mux, clap, hugo (scratch/external_eval/*)
 
 After the v4 eval data correction (8 expected-answer labels that pointed at
 wrong/aggregate files fixed) plus the reranker `MFD=2` parity mode, top-5 hit
-rate across all 5 repos is **156/173 (90.2%)** at semantic weight 0.65,
-shortlist 30.
+rate across all 5 repos is **155/173 (89.6%)** at semantic weight 0.65,
+shortlist 30. v4 measured 156/173; the post-v5 re-run measures 155 (see the
+v5 note below) — identical rankings, ±1 LLM-description drift.
 
-| repo            | v3      | v4      | notes                                       |
-|-----------------|---------|---------|---------------------------------------------|
-| gin-gonic/gin   |  41/42  |  41/42  | only remaining: bogus CORS case             |
-| spf13/cobra     |  25/27  |  27/27  | 100%; 2 hits from corrected ground truth (command.go) |
-| gorilla/mux     |  25/25  |  25/25  | 100%                                        |
-| clap-rs/clap    |  30/40  |  31/40  | +1 from corrected ground truth (aot/generator/mod.rs) |
-| gohugoio/hugo   |  26/39  |  32/39  | +6: 5 corrected labels + MFD=2 ordering     |
+| repo            | v3      | v4      | v5      | notes                                       |
+|-----------------|---------|---------|---------|---------------------------------------------|
+| gin-gonic/gin   |  41/42  |  41/42  |  41/42  | only remaining: bogus CORS case             |
+| spf13/cobra     |  25/27  |  27/27  |  27/27  | 100%; 2 hits from corrected ground truth (command.go) |
+| gorilla/mux     |  25/25  |  25/25  |  25/25  | 100%                                        |
+| clap-rs/clap    |  30/40  |  31/40  |  31/40  | +1 from corrected ground truth (aot/generator/mod.rs) |
+| gohugoio/hugo   |  26/39  |  32/39  |  31/39  | +6 from v3: 5 corrected labels + MFD=2; -1 at v5 = desc drift |
 
 ## What changed in v4 (2026-08-13)
 
@@ -61,7 +62,19 @@ shortlist 30.
 - Current tuning was locked on the clean, rebuilt indexes: 136 → 147 (+11)
   from v3, then 147 → 156 (+9) from v4 (mostly ground-truth correction).
 
-## Remaining failures (17)
+## v5 (2026-08-13) — performance release
+
+v5 was a pure optimization pass and did **not** change ranking: the new lazy
+keyword-statistics cache is verified ranking-neutral by `scratch/ab_verify.go`
+(which runs old vs. new keyword paths and diffs the results — byte-for-byte
+identical), and chunk IDs are unchanged under the parallel chunk extractor.
+The eval re-run after v5 measured **155/173** (hugo 31/39); v4's 156/173 had
+hugo at 32/39 on a previously regenerated description index. That one-case
+hugo movement is the documented LLM-description nondeterminism (borderline
+conceptual case swaps in/out of top-5), not a ranking regression. Treat the
+total as 155–156 (±1).
+
+## Remaining failures (18)
 
 - hugo: interface-vs-impl ranking (target often rank #2 semantic alt),
   docs/testdata chunks, and "site language configuration" / "flag set"

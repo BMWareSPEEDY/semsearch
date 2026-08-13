@@ -20,7 +20,8 @@ only measured up to the point of abort for large repos — see
 - `--no-llm` produces code-only descriptions (description vector == code vector)
   and is the recommended mode for large repos. Search/eval results are
   identical because the eval uses `codeOnly=true`.
-- Chunk extraction is single-threaded; embedding is CPU-bound and parallel
-  (~229% CPU utilization observed).
+- Chunk extraction is now parallel (v5; bounded worker pool, deterministic
+  scan-order results). Embedding is CPU-bound and parallel (~229% CPU
+  utilization observed).
 - The full LLM description pipeline on a ~10K-chunk repo would take much longer
   (hundreds of Ollama calls at ~1s each with concurrency 4).

@@ -64,6 +64,8 @@ Environment variables:
 | `SEMSEARCH_LLM_MODEL`       | `qwen3.5:0.8b` | Ollama model used for descriptions   |
 | `SEMSEARCH_LLM_CONCURRENCY` | `4`     | parallel LLM description workers             |
 | `SEMSEARCH_MIN_DESC_LINES`  | `30`    | only chunks with >= this many lines get LLM descs |
+| `SEMSEARCH_BATCH_SIZE`      | `32`    | embedder batch size (`16` for models with dim > 512) |
+| `SEMSEARCH_CHUNK_WORKERS`   | `min(CPU, 8)`, max `64` | parallel chunk-extraction workers |
 
 ## What's ignored
 
@@ -74,7 +76,8 @@ The scanner skips: `.git`, `node_modules`, `dist`, `build`, `target`,
 
 ## Known limits
 
-- Very large monorepos (thousands of files) index slowly — chunk extraction is
-  single-threaded. Use `--no-llm` and index target subdirectories.
+- Very large monorepos still index slowly. Chunk extraction is parallel, but
+  embedding and LLM description generation dominate. Use `--no-llm` and index
+  target subdirectories.
 - Large mixed doc+code indexes (10K+ chunks) have lower conceptual recall.
   See `scratch/FINDINGS.md` for a detailed "works / doesn't work" writeup.
