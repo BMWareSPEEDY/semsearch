@@ -143,7 +143,7 @@ func (w *IndexWatcher) reindexFiles(filePaths []string) {
 
 		fmt.Printf("[%s] Re-embedding modified file: %s...\n", time.Now().Format("15:04:05"), path)
 
-		chunks, err := w.chunker.ChunkFile(path)
+		chunks, err := w.chunker.ChunkBytes(path, content)
 		if err != nil || len(chunks) == 0 {
 			continue
 		}

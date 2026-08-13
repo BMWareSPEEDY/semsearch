@@ -12,8 +12,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -168,24 +170,62 @@ func runIndexing(dir string, noLLM bool) {
 
 	fmt.Printf("Found %d files. Extracting chunks...\n", len(files))
 	c := chunker.NewDefaultChunker()
+
+	// Chunk extraction is embarrassingly parallel but the chunk/vendor order is
+	// deterministic: files are processed in scan order, so chunk IDs and the
+	// vector alignment are identical to serial processing. A bounded worker pool
+	// keeps memory and CPU sane on lower-end machines and scales up on bigger
+	// ones (SEMSEARCH_CHUNK_WORKERS overrides the auto-detected concurrency).
+	workers := runtime.NumCPU()
+	if workers > 8 {
+		workers = 8
+	}
+	if v := os.Getenv("SEMSEARCH_CHUNK_WORKERS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 64 {
+			workers = parsed
+		}
+	}
+
+	type fileResult struct {
+		hash   string
+		chunks []chunker.Chunk
+	}
+	results := make([]fileResult, len(files))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, workers)
+	for idx, file := range files {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, file string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			content, err := os.ReadFile(file)
+			if err != nil {
+				return
+			}
+			hash := sha256.Sum256(content)
+			chunks, err := c.ChunkBytes(file, content)
+			if err != nil {
+				return
+			}
+			results[idx] = fileResult{hash: hex.EncodeToString(hash[:8]), chunks: chunks}
+		}(idx, file)
+	}
+	wg.Wait()
+
+	// Merge in scan order so chunk IDs and vector alignment stay deterministic.
+	fileHashes := make(map[string]string, len(files))
 	var allChunks []chunker.Chunk
-
-	fileHashes := make(map[string]string)
-	for _, file := range files {
-		content, err := os.ReadFile(file)
-		if err != nil {
+	for idx, file := range files {
+		r := results[idx]
+		if r.hash == "" {
 			continue
 		}
-		hash := sha256.Sum256(content)
-		fileHashes[file] = hex.EncodeToString(hash[:8])
-
-		chunks, err := c.ChunkFile(file)
-		if err != nil {
-			continue
-		}
-		for i := range chunks {
-			chunks[i].ID = len(allChunks)
-			allChunks = append(allChunks, chunks[i])
+		fileHashes[file] = r.hash
+		for i := range r.chunks {
+			r.chunks[i].ID = len(allChunks)
+			allChunks = append(allChunks, r.chunks[i])
 		}
 	}
 

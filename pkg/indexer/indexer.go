@@ -4,13 +4,13 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ashishpaliwal/semsearch/pkg/chunker"
@@ -38,6 +38,27 @@ type IndexStore struct {
 	Manifest    Manifest
 	Vectors     []float32 // Code vectors: TotalChunks * VectorDimensions
 	DescVectors []float32 // Description vectors: TotalChunks * VectorDimensions (optional)
+
+	// Lazy per-index keyword statistics. Tokenizing every chunk's content on
+	// every query is the dominant search-time cost; these are built once per
+	// index load (see ensureKeywordIndex) and reused across queries.
+	kwMu     sync.Mutex
+	kwReady  bool
+	kwTokens []chunkTokens
+	kwDF     map[string]int32 // df over content U header tokens
+	kwAvg    float64          // mean unique content tokens per chunk
+}
+
+// chunkTokens holds the pre-tokenized keyword data for a single chunk: the
+// unique content and header tokens (sorted, with counts), the lowercased base
+// filename, and the number of unique content tokens.
+type chunkTokens struct {
+	content    []string
+	contentCnt []int32
+	header     []string
+	headerCnt  []int32
+	base       string
+	uniqueCnt  int32
 }
 
 func NewIndexStore(rootDir string) *IndexStore {
@@ -53,7 +74,7 @@ func (s *IndexStore) SaveDual(manifest Manifest, codeVectors, descVectors []floa
 	}
 
 	manifestPath := filepath.Join(s.indexDir, "manifest.json")
-	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	manifestData, err := json.Marshal(manifest)
 	if err != nil {
 		return err
 	}
@@ -76,6 +97,7 @@ func (s *IndexStore) SaveDual(manifest Manifest, codeVectors, descVectors []floa
 	s.Manifest = manifest
 	s.Vectors = codeVectors
 	s.DescVectors = descVectors
+	s.invalidateKeywordIndex()
 	return nil
 }
 
@@ -89,16 +111,7 @@ func writeVectorFile(path string, vectors []float32) error {
 		return err
 	}
 	defer file.Close()
-
-	buf := make([]byte, 4)
-	for _, val := range vectors {
-		bits := math.Float32bits(val)
-		binary.LittleEndian.PutUint32(buf, bits)
-		if _, err := file.Write(buf); err != nil {
-			return err
-		}
-	}
-	return nil
+	return binary.Write(file, binary.LittleEndian, vectors)
 }
 
 func readVectorFile(path string, totalFloats int) ([]float32, error) {
@@ -109,14 +122,8 @@ func readVectorFile(path string, totalFloats int) ([]float32, error) {
 	defer file.Close()
 
 	vectors := make([]float32, totalFloats)
-	buf := make([]byte, 4)
-
-	for i := 0; i < totalFloats; i++ {
-		if _, err := io.ReadFull(file, buf); err != nil {
-			return nil, fmt.Errorf("corrupted vector binary store at index %d: %w", i, err)
-		}
-		bits := binary.LittleEndian.Uint32(buf)
-		vectors[i] = math.Float32frombits(bits)
+	if err := binary.Read(file, binary.LittleEndian, vectors); err != nil {
+		return nil, fmt.Errorf("corrupted vector binary store (expected %d floats): %w", totalFloats, err)
 	}
 	return vectors, nil
 }
@@ -148,7 +155,16 @@ func (s *IndexStore) Load() error {
 	s.Manifest = manifest
 	s.Vectors = codeVecs
 	s.DescVectors = descVecs
+	s.invalidateKeywordIndex()
 	return nil
+}
+
+// invalidateKeywordIndex drops lazily-built keyword statistics. Safe to call
+// whenever the manifest chunks change (load, save, watch updates).
+func (s *IndexStore) invalidateKeywordIndex() {
+	s.kwReady = false
+	s.kwTokens = nil
+	s.kwDF = nil
 }
 
 func (s *IndexStore) UpdateFileChunks(filePath, fileHash string, newChunks []chunker.Chunk, newVectors []float32) error {
@@ -382,84 +398,30 @@ func addSlices(a, b []float32) []float32 {
 // code content and a normalized lexical score combining symbol-name and
 // file-path term matches. Both are in [0,1].
 func (s *IndexStore) computeKeywordScores(queryTerms []string, totalChunks int) ([]float32, []float32) {
+	s.ensureKeywordIndex()
+
 	bm25Scores := make([]float32, totalChunks)
 	lexicalScores := make([]float32, totalChunks)
 
-	// Pre-tokenize each chunk once. contentTerms counts full matches in the
-	// raw body; headerTerms counts matches in the structural metadata header
-	// (which carries package/file/symbol context).
-	type chunkTokenData struct {
-		contentTerms map[string]int
-		headerTerms  map[string]int
-		pathTerms    map[string]int
-		tokenCount   int
-	}
-	data := make([]chunkTokenData, totalChunks)
-
-	// df counts chunks containing each term (in content OR header OR path).
-	df := make(map[string]int)
-	avgTokens := 0.0
-	tokenDocs := 0
-
-	for i := 0; i < totalChunks; i++ {
-		ch := &s.Manifest.Chunks[i]
-		raw := ch.Content
-
-		// Isolate the structural metadata header, if present.
-		var body string
-		headerTerms := map[string]int{}
-		if strings.HasPrefix(raw, "// [Package:") {
-			if idx := strings.Index(raw, "\n"); idx != -1 {
-				header := raw[:idx]
-				body = raw[idx+1:]
-				for _, t := range TokenizeTerms(header) {
-					headerTerms[t]++
+	// df contribution from content/header is precomputed (kwDF). The path
+	// contribution is query-dependent: a chunk counts toward a term's df only
+	// if the term appears in its base filename but not already in its content
+	// or header tokens (so a term in both still counts once, matching the
+	// union semantics of df).
+	pathDF := make(map[string]int32, len(queryTerms))
+	if len(queryTerms) > 0 {
+		hasTerm := func(tokens []string, term string) bool {
+			i := sort.SearchStrings(tokens, term)
+			return i < len(tokens) && tokens[i] == term
+		}
+		for i := 0; i < totalChunks; i++ {
+			td := &s.kwTokens[i]
+			for _, term := range queryTerms {
+				if strings.Contains(td.base, term) && !hasTerm(td.content, term) && !hasTerm(td.header, term) {
+					pathDF[term]++
 				}
-			} else {
-				body = raw
-			}
-		} else {
-			body = raw
-		}
-
-		contentTerms := map[string]int{}
-		for _, t := range TokenizeTerms(body) {
-			contentTerms[t]++
-		}
-
-		pathTerms := map[string]int{}
-		base := strings.ToLower(filepath.Base(ch.FilePath))
-		for _, t := range queryTerms {
-			if strings.Contains(base, t) {
-				pathTerms[t]++
 			}
 		}
-
-		combined := make(map[string]struct{}, len(contentTerms)+len(headerTerms)+len(pathTerms))
-		for t := range contentTerms {
-			combined[t] = struct{}{}
-		}
-		for t := range headerTerms {
-			combined[t] = struct{}{}
-		}
-		for t := range pathTerms {
-			combined[t] = struct{}{}
-		}
-
-		data[i] = chunkTokenData{
-			contentTerms: contentTerms,
-			headerTerms:  headerTerms,
-			pathTerms:    pathTerms,
-			tokenCount:   len(contentTerms),
-		}
-		for t := range combined {
-			df[t]++
-		}
-		avgTokens += float64(data[i].tokenCount)
-		tokenDocs++
-	}
-	if tokenDocs > 0 {
-		avgTokens /= float64(tokenDocs)
 	}
 
 	// BM25 with k1/b constants; header and path terms are weighted higher so an
@@ -468,23 +430,27 @@ func (s *IndexStore) computeKeywordScores(queryTerms []string, totalChunks int) 
 	// natural-language query words still hit code/doc-comment words.
 	const k1 = 1.4
 	const b = 0.6
+	avgTokens := s.kwAvg
 	for i := 0; i < totalChunks; i++ {
-		td := data[i]
-		dl := float64(td.tokenCount)
+		td := &s.kwTokens[i]
+		dl := float64(td.uniqueCnt)
 		if dl == 0 {
 			dl = 1
 		}
 		var score float64
 		var lexScore float64
 		for _, term := range queryTerms {
-			contentTf := countTermMatches(td.contentTerms, term)
-			headerTf := countTermMatches(td.headerTerms, term)
-			pathTf := float64(td.pathTerms[term])
+			contentTf := countTermMatchesArr(td.content, td.contentCnt, term)
+			headerTf := countTermMatchesArr(td.header, td.headerCnt, term)
+			var pathTf float64
+			if strings.Contains(td.base, term) {
+				pathTf = 1
+			}
 
 			if contentTf == 0 && headerTf == 0 && pathTf == 0 {
 				continue
 			}
-			docFreq := float64(df[term])
+			docFreq := float64(s.kwDF[term]) + float64(pathDF[term])
 			idf := math.Log((float64(totalChunks)-docFreq+0.5)/(docFreq+0.5) + 1.0)
 
 			// Weighted term frequency: header (symbol/pkg) terms dominate.
@@ -518,22 +484,129 @@ func (s *IndexStore) computeKeywordScores(queryTerms []string, totalChunks int) 
 	return bm25Scores, lexicalScores
 }
 
-// countTermMatches returns the summed frequency of tokens that either equal the
-// query term or, for terms of length >= 4, share a long-enough prefix (so
-// "positional" matches "position", "flags" matches "flag"). Prefix leniency is
-// limited to avoid the noisy substring matches of the old implementation.
-func countTermMatches(tokens map[string]int, term string) float64 {
-	if tokens[term] > 0 {
-		return float64(tokens[term])
+// ensureKeywordIndex builds the per-chunk token data and content/header
+// document frequencies once, then reuses them across queries. Building is
+// guarded by a mutex; afterwards the data is read-only.
+func (s *IndexStore) ensureKeywordIndex() {
+	s.kwMu.Lock()
+	defer s.kwMu.Unlock()
+	if s.kwReady {
+		return
+	}
+
+	totalChunks := s.Manifest.TotalChunks
+	tokens := make([]chunkTokens, totalChunks)
+	df := make(map[string]int32)
+	var avgSum float64
+	var tokenDocs int
+
+	for i := 0; i < totalChunks; i++ {
+		ch := &s.Manifest.Chunks[i]
+		ct := buildChunkTokens(ch)
+		tokens[i] = ct
+
+		// df over the union of content and header tokens (both sorted, so a
+		// merge walk visits each unique term once).
+		var ci, hi int
+		for ci < len(ct.content) || hi < len(ct.header) {
+			var term string
+			switch {
+			case hi >= len(ct.header) || (ci < len(ct.content) && ct.content[ci] < ct.header[hi]):
+				term = ct.content[ci]
+				ci++
+			case ci >= len(ct.content) || ct.header[hi] < ct.content[ci]:
+				term = ct.header[hi]
+				hi++
+			default:
+				term = ct.content[ci]
+				ci++
+				hi++
+			}
+			df[term]++
+		}
+		avgSum += float64(ct.uniqueCnt)
+		tokenDocs++
+	}
+
+	s.kwTokens = tokens
+	s.kwDF = df
+	s.kwAvg = 0
+	if tokenDocs > 0 {
+		s.kwAvg = avgSum / float64(tokenDocs)
+	}
+	s.kwReady = true
+}
+
+// buildChunkTokens tokenizes a chunk's code body and structural metadata header
+// into sorted unique tokens with counts, plus the lowercased base filename.
+func buildChunkTokens(ch *chunker.Chunk) chunkTokens {
+	raw := ch.Content
+
+	// Isolate the structural metadata header, if present.
+	var body string
+	headerTerms := map[string]int{}
+	if strings.HasPrefix(raw, "// [Package:") {
+		if idx := strings.Index(raw, "\n"); idx != -1 {
+			header := raw[:idx]
+			body = raw[idx+1:]
+			for _, t := range TokenizeTerms(header) {
+				headerTerms[t]++
+			}
+		} else {
+			body = raw
+		}
+	} else {
+		body = raw
+	}
+
+	contentTerms := map[string]int{}
+	for _, t := range TokenizeTerms(body) {
+		contentTerms[t]++
+	}
+
+	ct := chunkTokens{
+		base:      strings.ToLower(filepath.Base(ch.FilePath)),
+		uniqueCnt: int32(len(contentTerms)),
+	}
+	ct.content = sortedMapKeys(contentTerms)
+	ct.contentCnt = countsFor(ct.content, contentTerms)
+	ct.header = sortedMapKeys(headerTerms)
+	ct.headerCnt = countsFor(ct.header, headerTerms)
+	return ct
+}
+
+func sortedMapKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func countsFor(keys []string, m map[string]int) []int32 {
+	counts := make([]int32, len(keys))
+	for i, k := range keys {
+		counts[i] = int32(m[k])
+	}
+	return counts
+}
+
+// countTermMatchesArr is the sorted-array equivalent of countTermMatches:
+// exact matches count their frequency; otherwise tokens of length >= 4 that
+// share a long-enough prefix contribute 0.6 each.
+func countTermMatchesArr(tokens []string, counts []int32, term string) float64 {
+	if i := sort.SearchStrings(tokens, term); i < len(tokens) && tokens[i] == term {
+		return float64(counts[i])
 	}
 	if len(term) < 4 {
 		return 0
 	}
 	var total float64
-	for tok, cnt := range tokens {
+	for i, tok := range tokens {
 		if len(tok) >= 4 {
 			if strings.HasPrefix(tok, term) || strings.HasPrefix(term, tok) {
-				total += float64(cnt) * 0.6
+				total += float64(counts[i]) * 0.6
 			}
 		}
 	}

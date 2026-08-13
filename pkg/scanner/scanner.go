@@ -125,11 +125,7 @@ func (fs *FileScanner) Scan() ([]string, error) {
 			return nil
 		}
 
-		if isBinaryFile(path) {
-			return nil
-		}
-
-		if isMinifiedFile(path) {
+		if isSkippableContent(path) {
 			return nil
 		}
 
@@ -146,43 +142,36 @@ func (fs *FileScanner) Scan() ([]string, error) {
 	return files, err
 }
 
-// isBinaryFile reports whether the first bytes of the file look like binary
-// data. Binary content with a source-like extension (e.g. a PNG renamed to
-// .js) would otherwise be handed to the tree-sitter AST chunker, which can
-// take pathological amounts of time trying to recover. A NUL byte in the
-// first few KB is a strong signal of non-text content.
-func isBinaryFile(path string) bool {
+// isSkippableContent reports whether a file should be excluded, opening it
+// once: NUL bytes within the first 4KB indicate binary content, and a single
+// line longer than 20KB anywhere in the file indicates a minified bundle.
+// Binary content with a source-like extension (e.g. a PNG renamed to .js)
+// would otherwise be handed to the tree-sitter AST chunker, which can take
+// pathological amounts of time trying to recover; minified bundles are
+// low-information and their many near-identical chunks pollute results.
+func isSkippableContent(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
 
-	buf := make([]byte, 4096)
-	n, err := f.Read(buf)
+	// Binary sniff: a NUL byte in the first 4KB is a strong signal.
+	head := make([]byte, 4096)
+	n, err := f.Read(head)
 	if err != nil && err != io.EOF {
 		return false
 	}
-	for _, b := range buf[:n] {
+	for _, b := range head[:n] {
 		if b == 0 {
 			return true
 		}
 	}
-	return false
-}
 
-// isMinifiedFile reports whether a text file is a minified bundle (e.g. a
-// production JS/CSS asset) by checking for a very long line. Minified bundles
-// are low-information for semantic search and their many near-identical chunks
-// can dominate and pollute search results. A single line above 20KB chars is a
-// strong signal.
-func isMinifiedFile(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
+	// Minified sniff: a single line above 20KB chars is a strong signal.
+	if _, err := f.Seek(0, 0); err != nil {
 		return false
 	}
-	defer f.Close()
-
 	reader := bufio.NewReaderSize(f, 64*1024)
 	for {
 		line, err := reader.ReadSlice('\n')

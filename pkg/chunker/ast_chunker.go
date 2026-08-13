@@ -383,13 +383,39 @@ func splitLines(s string) []string {
 	return lines
 }
 
+// splitLinesExact splits on '\n' and strips a single trailing '\r' per line,
+// matching bufio.Scanner's ScanLines behavior (used by the legacy chunking
+// path) so cross-platform CRLF files chunk identically.
+func splitLinesExact(s string) []string {
+	var lines []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			end := i
+			if end > start && s[end-1] == '\r' {
+				end--
+			}
+			lines = append(lines, s[start:end])
+			start = i + 1
+		}
+	}
+	if start <= len(s) {
+		end := len(s)
+		if end > start && s[end-1] == '\r' {
+			end--
+		}
+		lines = append(lines, s[start:end])
+	}
+	return lines
+}
+
 func joinLines(lines []string) string {
-	res := ""
+	var b strings.Builder
 	for i, l := range lines {
 		if i > 0 {
-			res += "\n"
+			b.WriteByte('\n')
 		}
-		res += l
+		b.WriteString(l)
 	}
-	return res
+	return b.String()
 }

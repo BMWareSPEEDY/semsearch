@@ -1,7 +1,6 @@
 package chunker
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -22,8 +21,14 @@ type Chunk struct {
 	Preview     string `json:"preview"`
 }
 
-type Chunker interface {
+type ChunkFile interface {
 	ChunkFile(filePath string) ([]Chunk, error)
+	ChunkBytes(filePath string, content []byte) ([]Chunk, error)
+}
+
+// Chunker is the chunking API used by the indexing pipeline.
+type Chunker interface {
+	ChunkFile
 }
 
 type DefaultChunker struct {
@@ -39,17 +44,23 @@ func NewDefaultChunker() *DefaultChunker {
 }
 
 func (c *DefaultChunker) ChunkFile(filePath string) ([]Chunk, error) {
-	file, err := os.Open(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	return c.ChunkBytes(filePath, content)
+}
 
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+// ChunkBytes chunks content already read from disk, avoiding a second file
+// read by callers that already have the bytes (indexing, the watcher).
+func (c *DefaultChunker) ChunkBytes(filePath string, content []byte) ([]Chunk, error) {
+	if len(content) == 0 {
+		return nil, nil
 	}
+
+	// ScanLines semantics: split on '\n' and strip a trailing '\r' (CRLF), so
+	// cross-platform files produce chunk content identical to the bufio path.
+	lines := splitLinesExact(string(content))
 
 	if len(lines) == 0 {
 		return nil, nil
@@ -64,11 +75,8 @@ func (c *DefaultChunker) ChunkFile(filePath string) ([]Chunk, error) {
 	// back to the sliding window internally for unparseable files.
 	if languageFromExtension(ext) != nil {
 		astChunker := NewASTChunker()
-		content, readErr := os.ReadFile(filePath)
-		if readErr == nil {
-			if chunks, err := astChunker.ChunkFile(filePath, content); err == nil && len(chunks) > 0 {
-				return chunks, nil
-			}
+		if chunks, err := astChunker.ChunkFile(filePath, content); err == nil && len(chunks) > 0 {
+			return chunks, nil
 		}
 	}
 

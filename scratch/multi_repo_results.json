@@ -131,7 +131,7 @@
       "rendering": 2
     },
     "cat_top5": {
-      "conceptual": 14,
+      "conceptual": 13,
       "config": 3,
       "error_handling": 2,
       "exact_symbol": 11,
@@ -142,7 +142,7 @@
     "query_count": 39,
     "top1": 16,
     "top3": 25,
-    "top5": 32
+    "top5": 31
   },
   "mux": {
     "by_category": {

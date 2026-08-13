@@ -5,8 +5,12 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 
 	ort "github.com/yalue/onnxruntime_go"
 )
@@ -136,6 +140,12 @@ type Embedder struct {
 	modelPath string
 	maxLen    int
 	dim       int
+	batchSize int
+
+	mu          sync.Mutex
+	initErr     error
+	threeInputs bool
+	inputsKnown bool
 }
 
 func NewEmbedder(modelPath string, tokenizerJSON []byte) (*Embedder, error) {
@@ -144,9 +154,8 @@ func NewEmbedder(modelPath string, tokenizerJSON []byte) (*Embedder, error) {
 		return nil, err
 	}
 
-	ort.SetSharedLibraryPath("/opt/homebrew/Cellar/onnxruntime/1.28.0_1/lib/libonnxruntime.dylib")
-	if err := ort.InitializeEnvironment(); err != nil {
-		// Environment may already be initialized
+	if err := ensureRuntime(); err != nil {
+		return nil, err
 	}
 
 	dim := 768
@@ -163,11 +172,22 @@ func NewEmbedder(modelPath string, tokenizerJSON []byte) (*Embedder, error) {
 		}
 	}
 
+	batchSize := 32
+	if dim > 512 {
+		batchSize = 16
+	}
+	if v := os.Getenv("SEMSEARCH_BATCH_SIZE"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 1 && parsed <= 512 {
+			batchSize = parsed
+		}
+	}
+
 	return &Embedder{
 		tokenizer: tok,
 		modelPath: modelPath,
 		maxLen:    maxLen,
 		dim:       dim,
+		batchSize: batchSize,
 	}, nil
 }
 
@@ -175,137 +195,176 @@ func (e *Embedder) Dimension() int {
 	return e.dim
 }
 
+// inputSpec returns the ONNX input names and bound tensors for this model,
+// using the cached 2-vs-3-input decision when known so later batches never
+// re-probe the failing configuration.
+func (e *Embedder) inputSpec(idsTensor, maskTensor, typesTensor *ort.Tensor[int64]) ([]string, []ort.ArbitraryTensor) {
+	if e.inputsKnown && !e.threeInputs {
+		return []string{"input_ids", "attention_mask"}, []ort.ArbitraryTensor{idsTensor, maskTensor}
+	}
+	return []string{"input_ids", "attention_mask", "token_type_ids"}, []ort.ArbitraryTensor{idsTensor, maskTensor, typesTensor}
+}
+
+// runBatch embeds a single batch of n texts, writing their pooled and
+// normalized vectors into dest at the chunk offset. Sessions and tensors are
+// created per batch sized exactly to n rows, so small calls (e.g. one query)
+// pay for n rows of inference instead of a padded full batch, and batches are
+// always in-bounds regardless of how many rows precede them.
+func (e *Embedder) runBatch(texts []string, prefix string, n, offset int, dest []float32) error {
+	rowLen := e.maxLen
+
+	idsData := make([]int64, n*rowLen)
+	maskData := make([]int64, n*rowLen)
+	typesData := make([]int64, n*rowLen)
+
+	for b, text := range texts {
+		ids, mask, types := e.tokenizer.Tokenize(prefix+text, e.maxLen)
+		base := b * rowLen
+		copy(idsData[base:base+rowLen], ids)
+		copy(maskData[base:base+rowLen], mask)
+		copy(typesData[base:base+rowLen], types)
+	}
+
+	shape := ort.NewShape(int64(n), int64(rowLen))
+	idsTensor, err := ort.NewTensor(shape, idsData)
+	if err != nil {
+		return fmt.Errorf("input_ids tensor error: %w", err)
+	}
+	defer idsTensor.Destroy()
+	maskTensor, err := ort.NewTensor(shape, maskData)
+	if err != nil {
+		return fmt.Errorf("attention_mask tensor error: %w", err)
+	}
+	defer maskTensor.Destroy()
+	typesTensor, err := ort.NewTensor(shape, typesData)
+	if err != nil {
+		return fmt.Errorf("token_type_ids tensor error: %w", err)
+	}
+	defer typesTensor.Destroy()
+
+	outputData := make([]float32, n*rowLen*e.dim)
+	outputTensor, err := ort.NewTensor(ort.NewShape(int64(n), int64(rowLen), int64(e.dim)), outputData)
+	if err != nil {
+		return fmt.Errorf("output tensor error: %w", err)
+	}
+	defer outputTensor.Destroy()
+	outputs := []ort.ArbitraryTensor{outputTensor}
+
+	inputNames, inputs := e.inputSpec(idsTensor, maskTensor, typesTensor)
+	session, err := ort.NewAdvancedSession(
+		e.modelPath,
+		inputNames,
+		[]string{"last_hidden_state"},
+		inputs,
+		outputs,
+		nil,
+	)
+	if err == nil {
+		err = session.Run()
+	}
+	if err != nil && !e.inputsKnown {
+		// Some exported models take token_type_ids, others don't. The failure
+		// can surface at session creation or at Run; retry once without
+		// token_type_ids and remember which input set works.
+		if session != nil {
+			session.Destroy()
+			session = nil
+		}
+		session, err = ort.NewAdvancedSession(
+			e.modelPath,
+			[]string{"input_ids", "attention_mask"},
+			[]string{"last_hidden_state"},
+			[]ort.ArbitraryTensor{idsTensor, maskTensor},
+			outputs,
+			nil,
+		)
+		if err == nil {
+			err = session.Run()
+		}
+		if err == nil {
+			e.threeInputs = false
+			e.inputsKnown = true
+		}
+	}
+	if session != nil {
+		defer session.Destroy()
+	}
+	if err != nil {
+		return fmt.Errorf("ONNX inference execution failed: %w", err)
+	}
+
+	poolInto(outputData, maskData, n, offset, e.maxLen, e.dim, dest)
+	return nil
+}
+
+// Destroy releases ONNX resources. The embedder holds no persistent sessions or
+// tensors (they are created per batch), so this is a no-op kept for API
+// compatibility.
+func (e *Embedder) Destroy() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// no persistent resources to release
+}
+
 func (e *Embedder) EmbedBatch(texts []string, prefix string) ([]float32, error) {
 	if len(texts) == 0 {
 		return nil, nil
 	}
 
-	batchSize := 32
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.initErr != nil {
+		return nil, e.initErr
+	}
+
 	total := len(texts)
 	result := make([]float32, total*e.dim)
+	bs := e.batchSize
 
-	for i := 0; i < total; i += batchSize {
-		end := i + batchSize
+	for start := 0; start < total; start += bs {
+		end := start + bs
 		if end > total {
 			end = total
 		}
-
-		subTexts := texts[i:end]
-		curBatchSize := len(subTexts)
-
-		allIDs := make([]int64, curBatchSize*e.maxLen)
-		allMask := make([]int64, curBatchSize*e.maxLen)
-		allTypeIDs := make([]int64, curBatchSize*e.maxLen)
-
-		for b, text := range subTexts {
-			fullText := prefix + text
-			ids, mask, types := e.tokenizer.Tokenize(fullText, e.maxLen)
-			copy(allIDs[b*e.maxLen:(b+1)*e.maxLen], ids)
-			copy(allMask[b*e.maxLen:(b+1)*e.maxLen], mask)
-			copy(allTypeIDs[b*e.maxLen:(b+1)*e.maxLen], types)
+		if err := e.runBatch(texts[start:end], prefix, end-start, start, result); err != nil {
+			return nil, err
 		}
-
-		shape := ort.NewShape(int64(curBatchSize), int64(e.maxLen))
-
-		inputIDsTensor, err := ort.NewTensor(shape, allIDs)
-		if err != nil {
-			return nil, fmt.Errorf("input_ids tensor error: %w", err)
-		}
-
-		attentionMaskTensor, err := ort.NewTensor(shape, allMask)
-		if err != nil {
-			inputIDsTensor.Destroy()
-			return nil, fmt.Errorf("attention_mask tensor error: %w", err)
-		}
-
-		tokenTypeIDsTensor, err := ort.NewTensor(shape, allTypeIDs)
-		if err != nil {
-			inputIDsTensor.Destroy()
-			attentionMaskTensor.Destroy()
-			return nil, fmt.Errorf("token_type_ids tensor error: %w", err)
-		}
-
-		outputShape := ort.NewShape(int64(curBatchSize), int64(e.maxLen), int64(e.dim))
-		outputData := make([]float32, curBatchSize*e.maxLen*e.dim)
-		outputTensor, err := ort.NewTensor(outputShape, outputData)
-		if err != nil {
-			inputIDsTensor.Destroy()
-			attentionMaskTensor.Destroy()
-			tokenTypeIDsTensor.Destroy()
-			return nil, fmt.Errorf("output tensor error: %w", err)
-		}
-
-		session, err := ort.NewAdvancedSession(
-			e.modelPath,
-			[]string{"input_ids", "attention_mask", "token_type_ids"},
-			[]string{"last_hidden_state"},
-			[]ort.ArbitraryTensor{inputIDsTensor, attentionMaskTensor, tokenTypeIDsTensor},
-			[]ort.ArbitraryTensor{outputTensor},
-			nil,
-		)
-		if err != nil {
-			session, err = ort.NewAdvancedSession(
-				e.modelPath,
-				[]string{"input_ids", "attention_mask"},
-				[]string{"last_hidden_state"},
-				[]ort.ArbitraryTensor{inputIDsTensor, attentionMaskTensor},
-				[]ort.ArbitraryTensor{outputTensor},
-				nil,
-			)
-			if err != nil {
-				inputIDsTensor.Destroy()
-				attentionMaskTensor.Destroy()
-				tokenTypeIDsTensor.Destroy()
-				outputTensor.Destroy()
-				return nil, fmt.Errorf("ONNX session error: %w", err)
-			}
-		}
-
-		err = session.Run()
-		inputIDsTensor.Destroy()
-		attentionMaskTensor.Destroy()
-		tokenTypeIDsTensor.Destroy()
-		outputTensor.Destroy()
-		session.Destroy()
-
-		if err != nil {
-			return nil, fmt.Errorf("ONNX inference execution failed: %w", err)
-		}
-
-		subVectors := poolAndNormalize(outputData, allMask, curBatchSize, e.maxLen, e.dim)
-		copy(result[i*e.dim:end*e.dim], subVectors)
 	}
 
 	return result, nil
 }
 
-func poolAndNormalize(raw []float32, attentionMask []int64, batchSize, maxSeqLen, hiddenDim int) []float32 {
-	result := make([]float32, batchSize*hiddenDim)
-
-	for b := 0; b < batchSize; b++ {
-		vec := make([]float32, hiddenDim)
+// poolInto mean-pools + L2-normalizes each batch row and writes it into dest at
+// the corresponding chunk offset. raw and mask are batch-local (rows 0..n-1);
+// dest is indexed by the absolute chunk row.
+func poolInto(raw []float32, mask []int64, realRows, offset, maxSeqLen, hiddenDim int, dest []float32) {
+	for b := 0; b < realRows; b++ {
+		row := offset + b
+		vec := dest[row*hiddenDim : (row+1)*hiddenDim]
+		for i := range vec {
+			vec[i] = 0
+		}
 		var validTokens float32 = 0.0
-
 		for s := 0; s < maxSeqLen; s++ {
-			if attentionMask[b*maxSeqLen+s] == 1 {
+			if mask[b*maxSeqLen+s] == 1 {
 				validTokens += 1.0
-				offset := (b*maxSeqLen + s) * hiddenDim
+				off := (b*maxSeqLen + s) * hiddenDim
 				for d := 0; d < hiddenDim; d++ {
-					vec[d] += raw[offset+d]
+					vec[d] += raw[off+d]
 				}
 			}
 		}
-
 		if validTokens > 0 {
 			for d := 0; d < hiddenDim; d++ {
 				vec[d] /= validTokens
 			}
 		}
 
-		// L2 Normalize
 		var norm float64 = 0.0
 		for d := 0; d < hiddenDim; d++ {
-			norm += float64(vec[d] * vec[d])
+			v := float64(vec[d])
+			norm += v * v
 		}
 		norm = math.Sqrt(norm)
 		if norm > 0 {
@@ -313,9 +372,74 @@ func poolAndNormalize(raw []float32, attentionMask []int64, batchSize, maxSeqLen
 				vec[d] = float32(float64(vec[d]) / norm)
 			}
 		}
+	}
+}
 
-		copy(result[b*hiddenDim:(b+1)*hiddenDim], vec)
+// ensureRuntime resolves the ONNX Runtime shared library for the current
+// platform and initializes the ORT environment (idempotent).
+func ensureRuntime() error {
+	lib, err := FindLibraryPath()
+	if err != nil {
+		return err
+	}
+	ort.SetSharedLibraryPath(lib)
+	if err := ort.InitializeEnvironment(); err != nil {
+		// Environment may already be initialized.
+	}
+	return nil
+}
+
+// FindLibraryPath locates the ONNX Runtime shared library. It checks (in
+// order): the ONNXRUNTIME_LIB env var, the directory of the running binary
+// (Windows), then standard Homebrew/system locations for macOS and Linux.
+func FindLibraryPath() (string, error) {
+	if v := os.Getenv("ONNXRUNTIME_LIB"); v != "" {
+		if _, err := os.Stat(v); err == nil {
+			return v, nil
+		}
+		return "", fmt.Errorf("ONNXRUNTIME_LIB=%q does not exist", v)
 	}
 
-	return result
+	// Windows: look for onnxruntime.dll next to the executable, then on PATH.
+	if runtime.GOOS == "windows" {
+		if exe, err := os.Executable(); err == nil {
+			cand := filepath.Join(filepath.Dir(exe), "onnxruntime.dll")
+			if _, err := os.Stat(cand); err == nil {
+				return cand, nil
+			}
+		}
+		if p, err := exec.LookPath("onnxruntime.dll"); err == nil {
+			return p, nil
+		}
+		return "", fmt.Errorf("onnxruntime.dll not found; set ONNXRUNTIME_LIB to its path")
+	}
+
+	candidates := []string{}
+	if runtime.GOOS == "darwin" {
+		// Homebrew Cellar path is versioned; pick whatever version is present.
+		for _, prefix := range []string{"/opt/homebrew", "/usr/local"} {
+			matches, _ := filepath.Glob(prefix + "/Cellar/onnxruntime/*/lib/libonnxruntime.dylib")
+			candidates = append(candidates, matches...)
+		}
+		candidates = append(candidates,
+			"/opt/homebrew/lib/libonnxruntime.dylib",
+			"/usr/local/lib/libonnxruntime.dylib",
+			"/opt/homebrew/opt/onnxruntime/lib/libonnxruntime.dylib",
+		)
+	} else if runtime.GOOS == "linux" {
+		candidates = append(candidates,
+			"/usr/local/lib/libonnxruntime.so",
+			"/usr/local/lib/libonnxruntime.so.1",
+			"/usr/lib/libonnxruntime.so",
+			"/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+			"/usr/lib/aarch64-linux-gnu/libonnxruntime.so",
+		)
+	}
+
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("ONNX Runtime shared library not found; install onnxruntime or set ONNXRUNTIME_LIB")
 }

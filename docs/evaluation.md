@@ -13,11 +13,11 @@ can the tool find the file that actually implements a given query? We measure
 
 | repo        | language | source files | index size | why                                        |
 |-------------|----------|-------------|------------|--------------------------------------------|
-| gin-gonic/gin | Go      | ~40         | 856 chunks | small, well-known web framework            |
-| spf13/cobra | Go       | ~15         | 447 chunks | small CLI framework                        |
-| gorilla/mux | Go       | ~10         | 160 chunks | tiny router                                |
-| clap-rs/clap| Rust     | 330         | 6391 chunks| medium Rust CLI parser                     |
-| gohugoio/hugo | Go     | 906         | 10847 chunks| large Go codebase incl. docs              |
+| gin-gonic/gin | Go      | ~40         | 890 chunks | small, well-known web framework            |
+| spf13/cobra | Go       | ~15         | 521 chunks | small CLI framework                        |
+| gorilla/mux | Go       | ~10         | 165 chunks | tiny router                                |
+| clap-rs/clap| Rust     | 330         | 7256 chunks| medium Rust CLI parser                     |
+| gohugoio/hugo | Go     | 906         | 11514 chunks| large Go codebase incl. docs              |
 
 Repos are shallow-cloned into `scratch/external_eval/` (gitignored).
 
@@ -90,13 +90,26 @@ network-bound.
 
 ## Reading the results
 
-- Small Go repos: 81–84% top-5.
-- Large mixed repo (hugo): 44% — degraded by docs + testdata chunks. Code-only
-  search (`--code-only`) improves exact-symbol hits.
+- Small Go repos: 98–100% top-5 (cobra and mux are perfect).
+- Large mixed repo (hugo): 82% top-5 — degraded by docs + testdata chunks
+  relative to the small repos, but code-only search (`--code-only`) improves
+  exact-symbol hits.
 - Exact-symbol queries are the strongest category; conceptual phrases that
   don't lexically overlap code are the weakest.
-- Overall top-5 across the 5 repos (after index rebuilds) is ~85% (147/173)
+- Overall top-5 across the 5 repos (after index rebuilds) is 156/173 (90.2%)
   with the tuned reranker (`SYM=0.10`, `PATW=0.0`, `CONT=0.01`, per-file
-  dedup, shortlist 30, semantic weight 0.65).
+  dedup `MFD=1` + v4 `MFD=2`, shortlist 30, semantic weight 0.65).
+
+### About the v4 jump (147/173 → 156/173)
+
+Not all of the 85% → 90% gain is pure ranking improvement. The v4 commit
+corrected eight expected-answer labels that pointed at the wrong or aggregate
+file — the queries were right, the ground truth wasn't. Examples: cobra's
+`Command` struct lives in `command.go`, not the top-level `cobra.go` wrapper;
+hugo's config loading lives in `config/configLoader.go`, not `config/config.go`. The
+remaining gain came from a new reranker parity mode (`MFD=2`) that keeps only
+the best chunk per file in the final ordering. Earlier numbers (e.g. "81–84%",
+"44%" for hugo) predate these label corrections and should not be cited against
+the current eval config.
 
 See `scratch/FINDINGS.md` for the full "works / doesn't work" analysis.

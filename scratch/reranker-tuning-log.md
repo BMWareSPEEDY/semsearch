@@ -1,10 +1,10 @@
-# Reranker & Retrieval Tuning Log — v3
+# Reranker & Retrieval Tuning Log — v3/v4
 
 This file records how semsearch's search accuracy is tuned and how to reproduce
 every number. Update it whenever the reranker, retrieval weights, or eval
 config change. It is the source of truth for "why is the accuracy what it is".
 
-## Current Production Tuning (v3)
+## Current Production Tuning (v4)
 
 Hardcoded defaults in `main.go` and `pkg/reranker/reranker.go`:
 
@@ -15,19 +15,20 @@ Hardcoded defaults in `main.go` and `pkg/reranker/reranker.go`:
 | `SYM`          | 0.10  | reranker `boostParams()`             | term-overlap boost on symbol name                 |
 | `PATW`         | 0.0   | reranker `boostParams()`             | term-overlap boost on file path                   |
 | `CONT`         | 0.01  | reranker `boostParams()`             | term-overlap boost on content                     |
-| `MFD`          | on    | reranker (env `MFD=0` disables)      | per-file dedup: keep best chunk per file          |
+| `MFD`          | 1     | reranker (env)                       | per-file dedup: 1 = best chunk/file before boosting, 2 = after boosting (v4), 0 = off |
 | `STABW`        | 0.0   | reranker `boostParams()`             | stability bonus (experimental, off by default)    |
 | `SEG`          | 0     | reranker `boostParams()`             | segment-matching mode (0/2/3, experimental)       |
 
-## Results (2026-08-12, rebuilt clean LLM indexes)
+## Results (rebuilt clean LLM indexes)
 
 | config                          | top-5 | notes                              |
 |---------------------------------|-------|------------------------------------|
 | honest baseline (rebuilt idx)   | 136   | w=0.65 sl=30, old additive boosts  |
-| + per-file dedup (MFD)          | 145   | removes same-file chunk crowding   |
+| + per-file dedup (MFD=1)        | 145   | removes same-file chunk crowding   |
 | + rebalanced boosts (v3 final)  | 147   | SYM=0.10 PATW=0 CONT=0.01          |
+| + v4 (corrected labels + MFD=2) | 156   | ground-truth fixes + final-order dedup |
 
-Per-repo: gin 41/42, cobra 25/27, mux 25/25, clap 30/40, hugo 26/39.
+Per-repo (v4): gin 41/42, cobra 27/27, mux 25/25, clap 31/40, hugo 32/39.
 Run: `eval_bench.go` with env `W=0.65 SL=30`.
 
 ## Reproducing the eval
@@ -44,7 +45,7 @@ W=0.65 SL=30 go run scratch/eval_bench.go \
 IMPORTANT: LLM description vectors are generated non-deterministically
 (qwen3.5, temperature 0 but upstream nondeterminism). Re-indexing a repo
 regenerates desc vectors and can shift absolute numbers by ±1–3. Treat
-"147/173" as the number on *these* particular index files; always re-confirm
+"156/173" as the number on *these* particular index files; always re-confirm
 after any reindex. Code vectors and eval cases are deterministic.
 
 ## Pitfalls learned (do not repeat)
@@ -74,7 +75,7 @@ after any reindex. Code vectors and eval cases are deterministic.
    `scratch/<harness>_main.go` + the model/case files, not `./...`.
    `go build ./...` fails by design; build with `go build -o semsearch .`.
 
-## Remaining failure modes (targets for v4)
+## Remaining failure modes (targets for v5)
 
 - hugo interface-vs-impl ranking: correct file often ranked as a
   semantically-arguable alternative (e.g. `Page` interface vs `pageState`).
