@@ -2,7 +2,7 @@ package main
 
 var cobraCases = []BenchCase{
 	// CONCEPTUAL
-	{Query: "building a root command for a command line application", Category: "conceptual", Expected: "cobra.go"},
+	{Query: "building a root command for a command line application", Category: "conceptual", Expected: "command.go"},
 	{Query: "parsing command line arguments into positional values", Category: "conceptual", Expected: "args.go"},
 	{Query: "grouping related flags into a named group for display", Category: "conceptual", Expected: "flag_groups.go"},
 	{Query: "generating shell autocompletion for bash zsh fish", Category: "conceptual", Expected: "completions.go"},
@@ -14,7 +14,7 @@ var cobraCases = []BenchCase{
 	{Query: "suggesting similar commands when the user types a typo", Category: "conceptual", Expected: "command.go"},
 
 	// EXACT SYMBOL
-	{Query: "type Command struct", Category: "exact_symbol", Expected: "cobra.go"},
+	{Query: "type Command struct", Category: "exact_symbol", Expected: "command.go"},
 	{Query: "func (c *Command) Execute", Category: "exact_symbol", Expected: "command.go"},
 	{Query: "func (c *Command) AddCommand", Category: "exact_symbol", Expected: "command.go"},
 	{Query: "func (c *Command) PersistentFlags", Category: "exact_symbol", Expected: "command.go"},

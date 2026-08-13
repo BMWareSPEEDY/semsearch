@@ -49,7 +49,14 @@ func (r *Reranker) Rerank(query string, candidates []indexer.SearchResult, topN 
 	n := len(candidates)
 	symW, pathW, contW, stabW, segMode := boostParams()
 
-	if os.Getenv("MFD") != "0" && len(candidates) > 1 {
+	mfd := os.Getenv("MFD")
+	if mfd == "0" {
+		mfd = ""
+	} else if mfd == "" {
+		mfd = "1"
+	}
+
+	if mfd == "1" && len(candidates) > 1 {
 		best := map[string]int{}
 		for i := range candidates {
 			fp := candidates[i].Chunk.FilePath
@@ -105,6 +112,23 @@ func (r *Reranker) Rerank(query string, candidates []indexer.SearchResult, topN 
 		if stabW > 0 {
 			candidates[i].Score += stabW * float32(n-i)
 		}
+	}
+
+	if mfd == "2" && len(candidates) > 1 {
+		best := map[string]int{}
+		for i := range candidates {
+			fp := candidates[i].Chunk.FilePath
+			if j, ok := best[fp]; !ok || candidates[i].Score > candidates[j].Score {
+				best[fp] = i
+			}
+		}
+		kept := make([]indexer.SearchResult, 0, len(best))
+		for _, i := range best {
+			kept = append(kept, candidates[i])
+		}
+		sort.Slice(kept, func(a, b int) bool { return kept[a].Score > kept[b].Score })
+		candidates = kept
+		n = len(candidates)
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {

@@ -19,7 +19,7 @@ var clapCases = []BenchCase{
 	{Query: "mapping a parsing failure to an error kind", Category: "conceptual", Expected: "clap_builder/src/error/kind.rs"},
 	{Query: "short name aliases for an argument", Category: "conceptual", Expected: "clap_builder/src/builder/arg.rs"},
 	{Query: "deriving a subcommand enum from a rust enum", Category: "conceptual", Expected: "clap_derive/src/derives/subcommand.rs"},
-	{Query: "generating shell completion scripts for a command", Category: "conceptual", Expected: "clap_complete/src/lib.rs"},
+	{Query: "generating shell completion scripts for a command", Category: "conceptual", Expected: "clap_complete/src/aot/generator/mod.rs"},
 	{Query: "lexing short flag clusters like -abc", Category: "conceptual", Expected: "clap_lex/src/lib.rs"},
 
 	// EXACT SYMBOL

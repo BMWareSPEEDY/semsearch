@@ -21,7 +21,7 @@
       "rendering": 2
     },
     "cat_top5": {
-      "conceptual": 13,
+      "conceptual": 14,
       "config": 1,
       "error_handling": 1,
       "exact_symbol": 13,
@@ -32,7 +32,7 @@
     "query_count": 40,
     "top1": 11,
     "top3": 22,
-    "top5": 30
+    "top5": 31
   },
   "cobra": {
     "by_category": {
@@ -43,32 +43,32 @@
       "rendering": 2
     },
     "cat_top1": {
-      "conceptual": 6,
+      "conceptual": 7,
       "config": 3,
       "error_handling": 1,
-      "exact_symbol": 9,
+      "exact_symbol": 10,
       "rendering": 1
     },
     "cat_top3": {
-      "conceptual": 6,
+      "conceptual": 7,
       "config": 3,
       "error_handling": 2,
-      "exact_symbol": 9,
+      "exact_symbol": 10,
       "rendering": 2
     },
     "cat_top5": {
-      "conceptual": 9,
+      "conceptual": 10,
       "config": 3,
       "error_handling": 2,
-      "exact_symbol": 9,
+      "exact_symbol": 10,
       "rendering": 2
     },
     "chunks": 521,
     "label": "spf13/cobra (Go CLI framework)",
     "query_count": 27,
-    "top1": 20,
-    "top3": 22,
-    "top5": 25
+    "top1": 22,
+    "top3": 24,
+    "top5": 27
   },
   "gin": {
     "by_category": {
@@ -117,30 +117,32 @@
       "rendering": 2
     },
     "cat_top1": {
-      "conceptual": 2,
+      "conceptual": 3,
+      "config": 2,
       "error_handling": 1,
       "exact_symbol": 8,
-      "rendering": 1
+      "rendering": 2
     },
     "cat_top3": {
-      "conceptual": 4,
+      "conceptual": 7,
+      "config": 3,
       "error_handling": 2,
       "exact_symbol": 11,
-      "rendering": 1
+      "rendering": 2
     },
     "cat_top5": {
-      "conceptual": 11,
-      "config": 1,
+      "conceptual": 14,
+      "config": 3,
       "error_handling": 2,
       "exact_symbol": 11,
-      "rendering": 1
+      "rendering": 2
     },
     "chunks": 11514,
     "label": "gohugoio/hugo (Go static site generator)",
     "query_count": 39,
-    "top1": 12,
-    "top3": 18,
-    "top5": 26
+    "top1": 16,
+    "top3": 25,
+    "top5": 32
   },
   "mux": {
     "by_category": {

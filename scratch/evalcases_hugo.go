@@ -17,9 +17,9 @@ var hugoCases = []BenchCase{
 	{Query: "publishing rendered pages to disk", Category: "conceptual", Expected: "publisher/publisher.go"},
 	{Query: "iterating over a collection of pages", Category: "conceptual", Expected: "tpl/collections/index.go"},
 	{Query: "appending values to a slice in templates", Category: "conceptual", Expected: "tpl/collections/append.go"},
-	{Query: "parsing command line flags for the hugo binary", Category: "conceptual", Expected: "commands/commands.go"},
-	{Query: "handling the hugo serve command with hot reload", Category: "conceptual", Expected: "commands/hugobuilder.go"},
-	{Query: "loading configuration from files into the runtime", Category: "conceptual", Expected: "config/config.go"},
+	{Query: "parsing command line flags for the hugo binary", Category: "conceptual", Expected: "commands/commandeer.go"},
+	{Query: "handling the hugo serve command with hot reload", Category: "conceptual", Expected: "commands/server.go"},
+	{Query: "loading configuration from files into the runtime", Category: "conceptual", Expected: "config/configLoader.go"},
 	{Query: "caching transformed resources on disk", Category: "conceptual", Expected: "resources/resource_cache.go"},
 	{Query: "processing an image resource through the image pipeline", Category: "conceptual", Expected: "resources/image.go"},
 	{Query: "resolving the templates available for a site", Category: "conceptual", Expected: "tpl/templates/templates.go"},
@@ -42,11 +42,11 @@ var hugoCases = []BenchCase{
 	{Query: "reporting a syntax error while converting markup", Category: "error_handling", Expected: "markup/goldmark/convert.go"},
 
 	// RENDERING
-	{Query: "rendering html output for a page", Category: "rendering", Expected: "hugolib/page__content.go"},
+	{Query: "rendering html output for a page", Category: "rendering", Expected: "hugolib/page__per_output.go"},
 	{Query: "writing minified output assets to the publish dir", Category: "rendering", Expected: "publisher/publisher.go"},
 
 	// CONFIG
-	{Query: "applying default configuration values", Category: "config", Expected: "config/config.go"},
-	{Query: "reading the site language configuration", Category: "config", Expected: "config/config.go"},
-	{Query: "building the flag set for the hugo command", Category: "config", Expected: "commands/commands.go"},
+	{Query: "applying default configuration values", Category: "config", Expected: "config/defaultConfigProvider.go"},
+	{Query: "reading the site language configuration", Category: "config", Expected: "langs/config.go"},
+	{Query: "building the flag set for the hugo command", Category: "config", Expected: "commands/commandeer.go"},
 }
