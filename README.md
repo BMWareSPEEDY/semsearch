@@ -1,7 +1,5 @@
 # semsearch
 
-> Local semantic code search. Find code by describing what it does — not by remembering what it's called.
-
 ---
 
 ## The Problem

@@ -1,9 +1,0 @@
-{
-  "top1_accuracy": 55.55555555555556,
-  "top1_correct": 10,
-  "top3_accuracy": 88.88888888888889,
-  "top3_correct": 16,
-  "top5_accuracy": 94.44444444444444,
-  "top5_correct": 17,
-  "total_cases": 18
-}
