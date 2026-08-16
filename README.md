@@ -65,7 +65,7 @@ Measured with the CodeMiniLM 384-dim model, semantic weight 0.65, and the tuned 
 | gohugoio/hugo   | 11,514 | 39      | 16/39   | 25/39   | 31/39 (79%) |
 | **total**       |        | **173** | 95/173  | 135/173 | **155/173 (90%)** |
 
-A few honest observations:
+A few observations:
 
 - **Exact-symbol queries are the strongest category** — if you know the name, it finds it fast.
 - **Conceptual queries are the weakest** — those that don't lexically overlap any code or docstring are where it still misses.
@@ -100,22 +100,6 @@ What moved the numbers:
 - **Single-pass file scanning.** The file-type, NUL-binary, and minified-line checks now happen in one read instead of opening each file multiple times; the `.git` filesystem is also skipped in one pass instead of re-walked.
 
 A full run of the eval harness (load five repos + 173 queries) takes ~10s wall time and peaks around 288 MB RSS in a single process. The machinery for reproducing this — and for A/B-ing the next change you make — lives in `scratch/` (`perf_bench.go` for latency/RSS, `ab_verify.go` to prove rankings didn't change). See `scratch/perf_report.json` and `scratch/logs/*.log` for the raw measurements.
-
----
-
-## Design Principles
-
-- **Local-first, always.** Your code never leaves your machine as part of the core search functionality.
-- **Verifiable, not opaque.** Every result comes with a real file, line number, and similarity score — you can see why something matched, not just trust an opinion.
-- **Minimal surface.** One tool, one job: turn a description into the right piece of code.
-
----
-
-## Status
-
-Actively developed. The core loop — index, search, serve, watch — is stable and covered by unit tests (`go test ./pkg/...`). Development so far has moved in five visible milestones: v1 shipped the full scan → chunk → embed → search pipeline; v2 overhauled semantic recall (doc-comment chunking, dual code/description vectors, targeted LLM descriptions); v3 added per-file dedup and a rebalanced reranker that lifted eval accuracy to 85% top-5; v4 corrected eight wrong eval ground-truth labels, added a reranker parity mode for per-file dedup in the final ordering, and brought eval accuracy to 156/173 (90%) top-5 across the five eval repos; v5 was a performance release — batched embedding with exact-size batches, a lazy keyword-statistics cache, deterministic parallel chunk extraction, and single-pass file scanning — that kept the same search quality (rankings bit-identical, re-measured at 155/173 due to the ±1 LLM-description drift noted above).
-
-The `scratch/` directory contains the evaluation harness and experiment code — it's a working notebook, not a library, and it's largely gitignored. It's kept because it's genuinely useful for reproducing benchmark numbers.
 
 ---
 
@@ -342,17 +326,6 @@ Ideas that are deferred but natural next steps:
 - **Multi-repo / cross-project search.**
 - **ANN indexing** (HNSW) for very large codebases.
 - **Model swap for the LLM description step** — the description vectors are the strongest lever on conceptual recall, but they depend on a local Ollama server and a small model.
-
----
-
-## Contributing
-
-Contributions are welcome. The codebase is small and readable: the pipeline lives in `pkg/` (`scanner`, `chunker`, `embedder`, `indexer`, `reranker`, `llm`, `watcher`, `history`), with the CLI glue in `main.go`.
-
-Before opening a PR, please:
-
-1. Run `go test ./pkg/...` (note: `go test ./...` fails by design — `scratch/` holds many one-off `main` scripts, and the eval files intentionally duplicate types).
-2. If your change affects search quality, run the eval harness against at least one of the eval repos and report the numbers. `docs/evaluation.md` explains how — reproducible results are the whole point of that harness.
 
 ---
 
