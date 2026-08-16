@@ -1,83 +1,51 @@
-# semsearch — Getting Started
+# Getting Started
 
-`semsearch` is a local-first semantic code search engine written in Go. It
-indexes a codebase into vector embeddings using a local ONNX model and lets
-you query it in natural language from the CLI or a local HTTP API. Everything
-runs on your machine — no cloud, no network required for search.
+Quick guide to building and using `semsearch`.
 
 ## Prerequisites
 
-- Go 1.22+
-- An ONNX embedding model. The repo is tested against:
-  - `scratch/code_minilm/model_quantized.onnx` + `tokenizer.json` (CodeMiniLM, 384-dim) — used for eval
-  - `scratch/model/model_quantized.onnx` + `tokenizer.json` (Nomic Embed v2, 768-dim) — used by the CLI
-- ONNX Runtime shared library (macOS: `brew install onnxruntime`; the code
-  looks for `libonnxruntime.dylib` under Homebrew).
+- **Go 1.22+**
+- **ONNX Runtime** (on macOS: `brew install onnxruntime`)
+- **Embedding model:** An ONNX model + tokenizer (tested with CodeMiniLM and Nomic Embed v2) placed where `semsearch` can find it.
+- *(Optional)* **Ollama** running locally if you want LLM-generated chunk descriptions (`ollama serve`).
 
-## Build
+## Installation
 
 ```bash
+# Clone and build
+git clone https://github.com/BMWareSPEEDY/semsearch.git
+cd semsearch
 go build -o semsearch .
 ```
 
-## Usage
+## Basic Usage
 
 ```bash
-# Index the current directory (or pass a path)
-./semsearch index [path]
+# 1. Index your project
+./semsearch index .
 
-# Search the indexed codebase with a natural language query
-./semsearch "query"
+# Index without Ollama (faster, skips description generation)
+./semsearch index . --no-llm
 
-# Start a local HTTP API server
+# 2. Search using plain English
+./semsearch "where do we parse HTTP request headers"
+
+# Filter to code files only or docs only
+./semsearch "routing table setup" --code-only
+./semsearch "deployment instructions" --docs-only
+
+# 3. Start local HTTP API server
 ./semsearch serve --port 1921
 
-# Check index status
-./semsearch status
-
-# Re-index on file changes (incremental watcher)
+# 4. Watch for file changes and auto-update index
 ./semsearch watch
-
-# Filter search to code files or docs only
-./semsearch "query" --code-only
-./semsearch "query" --docs-only
 ```
 
-The index is written to `.semsearch/` inside the target directory
-(`manifest.json` + `vectors.bin`).
+## Useful Config
 
-## Indexing a large repo
+You can set these via environment variables if you want to tweak things:
 
-```bash
-# Skip LLM description generation (fast; description vectors fall back to
-# heuristic synthetic text, so results differ slightly from --llm indexes)
-./semsearch index /path/to/repo --no-llm
-
-# Use local LLM descriptions (Ollama, qwen3.5:0.8b by default)
-./semsearch index /path/to/repo
-```
-
-Environment variables:
-
-| variable                    | default | purpose                                     |
-|-----------------------------|---------|---------------------------------------------|
-| `SEMSEARCH_LLM_MODEL`       | `qwen3.5:0.8b` | Ollama model used for descriptions   |
-| `SEMSEARCH_LLM_CONCURRENCY` | `4`     | parallel LLM description workers             |
-| `SEMSEARCH_MIN_DESC_LINES`  | `30`    | only chunks with >= this many lines get LLM descs |
-| `SEMSEARCH_BATCH_SIZE`      | `32`    | embedder batch size (`16` for models with dim > 512) |
-| `SEMSEARCH_CHUNK_WORKERS`   | `min(CPU, 8)`, max `64` | parallel chunk-extraction workers |
-
-## What's ignored
-
-The scanner skips: `.git`, `node_modules`, `dist`, `build`, `target`,
-`vendor`, hidden dotfiles, binary files (NUL-byte sniff), minified bundles
-(lines > 20KB), and common lockfiles. It also honours `.gitignore` and
-`.semsearchignore`.
-
-## Known limits
-
-- Very large monorepos still index slowly. Chunk extraction is parallel, but
-  embedding and LLM description generation dominate. Use `--no-llm` and index
-  target subdirectories.
-- Large mixed doc+code indexes (10K+ chunks) have lower conceptual recall.
-  See `scratch/FINDINGS.md` for a detailed "works / doesn't work" writeup.
+- `SEMSEARCH_LLM_MODEL` — Ollama model to use (default: `qwen3.5:0.8b`).
+- `SEMSEARCH_LLM_CONCURRENCY` — Parallel workers for descriptions (default: `4`).
+- `SEMSEARCH_SEM_WEIGHT` — Balance between semantic similarity and keyword matching (default: `0.65`).
+- `SEMSEARCH_BATCH_SIZE` — Batch size during embedding (default: `32`).

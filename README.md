@@ -1,122 +1,37 @@
 # semsearch
 
----
+Local semantic code search. Search your codebase in plain English and find functions, types, and logic based on what they do rather than exact variable names.
 
-## The Problem
-
-`grep` and "find in files" only match exact text. If you don't remember the exact function name, variable, or wording used in the code, you get nothing back — even when the code you're looking for exists and does exactly what you're describing.
-
-This happens constantly on any codebase you didn't write every line of yourself, or one you wrote months ago and no longer remember the naming conventions of. You know *what* the code does. You don't know what it's literally called. Searching for `"retry failed api call"` finds nothing if the actual function is named `resilientFetch`.
-
-Existing semantic search tools that solve this (Sourcegraph Cody, Cursor's codebase indexing) are cloud-tied, IDE-embedded, and often require sending your code to a third-party service. There wasn't a local-only, standalone, editor-agnostic option — something that just runs on your machine, indexes once, and answers plain-English queries without your code ever leaving your device.
-
-`semsearch` is that tool.
+Everything runs on your machine — no cloud services, no remote APIs, and your code never leaves your computer.
 
 ---
 
-## What It Does
+## Why I Built This
 
-Point it at a codebase. It indexes every function, class, and code block into vector embeddings — a numerical representation of what each chunk of code *means*, not just what it says. Then you search in plain English:
+Standard `grep` and text search only work if you already know the exact identifier or keyword you're looking for. If someone named the function `resilientFetch` and you search for `"retry failed requests"`, you get zero hits.
 
-```
-semsearch "where do we handle JSON body binding and validation errors"
-```
-
-...and it returns the actual relevant code, ranked by meaning, even if none of your words appear literally in the code.
-
-It also handles exact lookups just as well — searching for a real function name finds that function immediately, so you're not trading one kind of search for another.
-
-Everything runs locally: the embedding model, the index, the search itself. No account, no API key required for the core search, no code sent anywhere.
+Tools like Sourcegraph Cody or Cursor do semantic search, but they're either tied to a specific editor, require subscriptions, or send your source code to external servers. I wanted a standalone CLI and lightweight local HTTP server that works with any editor or terminal, completely offline.
 
 ---
 
-## How It Works (High Level)
+## Features
 
-1. **Chunking** — the codebase is parsed into meaningful units (functions, classes) using language-aware parsing, not arbitrary line splits.
-2. **Embedding** — each chunk is converted into a vector using a small local embedding model. Plain-English queries are embedded the same way, so they can be compared directly.
-3. **Semantic descriptions** — because raw code and plain-English queries don't naturally sit close together in vector space (a query like "retries failed requests" reads very differently from the actual code that does it), each chunk also gets a short, auto-generated natural-language description at index time. Both the code and its description are embedded, and a query is matched against whichever one it's closer to.
-4. **Hybrid ranking** — semantic similarity is blended with keyword matching, so exact identifier searches stay sharp while conceptual searches actually work.
-5. **Local API** — the same search is exposed over a local HTTP server, so it's not limited to the terminal — editor plugins, scripts, or other tools can query it too.
-
----
-
-## Why This Approach
-
-Semantic code search is a harder problem than semantic text search. Code and natural language are, in a real sense, two different modalities — a block of code and a sentence describing it don't naturally embed close together, even with a good model. Most of the engineering effort in this project went into closing that gap deliberately (auto-generated descriptions, careful chunk boundaries, hybrid scoring) rather than assuming a bigger model would solve it on its own — testing showed it largely doesn't.
-
-This project was built with a strict local-first constraint: no cloud dependency for the core search path, no mandatory account, and no compromise on that even when it would have been easier.
+- **Semantic + Keyword Hybrid Search:** Combines vector embeddings with BM25 keyword matching so exact symbol lookups remain accurate while conceptual queries still work.
+- **Language-aware AST Chunking:** Uses tree-sitter to break code down into logical units (functions, methods, classes) across Go, Python, TypeScript/JavaScript, Rust, and more.
+- **Dual Vector Matching:** Embeds both raw code and optional plain-English summaries so queries can match either the code itself or the concept it implements.
+- **Local HTTP API:** Run `semsearch serve` and query search results from editor plugins, shell scripts, or browsers.
+- **Live File Watcher:** Keeps your index up-to-date in the background as you write code.
 
 ---
 
-## Benchmarks
-
-The honest way to evaluate a search tool is against code you didn't write. So the tool is tested on five real, external open-source repositories — gin, cobra, gorilla/mux, clap, and hugo — with 173 hand-written queries in total across the five repos, each with a known-correct answer file. The queries are a mix of *conceptual* phrases ("rendering markdown content to html") and *exact-symbol* lookups, and a query counts as a hit only if the expected file lands in the top results.
-
-Measured with the CodeMiniLM 384-dim model, semantic weight 0.65, and the tuned reranker (per-file dedup, shortlist 30):
-
-| repo            | chunks | queries | top-1   | top-3   | top-5   |
-|-----------------|--------|---------|---------|---------|---------|
-| gin-gonic/gin   | 890    | 42      | 25/42   | 39/42   | 41/42 (98%) |
-| spf13/cobra     | 521    | 27      | 22/27   | 24/27   | 27/27 (100%) |
-| gorilla/mux     | 165    | 25      | 21/25   | 25/25   | 25/25 (100%) |
-| clap-rs/clap    | 7,256  | 40      | 11/40   | 22/40   | 31/40 (78%) |
-| gohugoio/hugo   | 11,514 | 39      | 16/39   | 25/39   | 31/39 (79%) |
-| **total**       |        | **173** | 95/173  | 135/173 | **155/173 (90%)** |
-
-A few observations:
-
-- **Exact-symbol queries are the strongest category** — if you know the name, it finds it fast.
-- **Conceptual queries are the weakest** — those that don't lexically overlap any code or docstring are where it still misses.
-- **Small, focused repos hit 100%.** cobra and gorilla/mux are now perfect at top-5.
-- **A note on the jump from 85% to 90%:** some of that gain is a *methodology* fix, not pure ranking improvement. A pass over the test set found eight "expected answer" labels that pointed at the wrong or aggregate file — for example, cobra's `Command` struct lives in `command.go`, not the top-level `cobra.go` wrapper. Those labels were corrected (the queries were right; the ground truth wasn't). The rest came from a new reranker parity mode that keeps only the best chunk per file in the final ordering. Both are worth stating plainly: eval numbers only mean something when the ground truth is actually correct.
-- **The numbers move ±1 between runs.** Description vectors come from an LLM, so a reindex can let one or two borderline conceptual cases drift in or out of the top results (hugo's counts have varied between 31 and 32 of 39 across re-runs on identical labels). The table reflects the latest measured run; treat totals as ~90% ± 1, not a fixed constant.
-- One of the 18 remaining misses is literally unfixable: a gin "CORS middleware" query whose answer doesn't exist in that checkout.
-
-The full methodology and the complete "works / doesn't work" writeup are in `docs/evaluation.md` and `scratch/FINDINGS.md`.
-
----
-
-## Performance
-
-v5 is the performance release. It was a pure optimization pass: the search rankings were verified byte-for-byte identical to v4 (`scratch/ab_verify.go` runs the old keyword path against the new one and diffs the results), so every number here is a speedup with *zero* quality trade-off. Measured with the perf harness (`scratch/perf_bench.go`) on an Apple M1 Pro (10-core, 16 GB):
-
-| repo           | index load | query embed | query search | end-to-end query | cold first query* |
-|----------------|------------|-------------|--------------|------------------|-------------------|
-| gin (0.8K chunks)  | ~12ms  | ~46ms | ~2ms  | ~51ms | ~108ms |
-| cobra (0.5K)       | ~7ms   | ~46ms | ~2ms  | ~48ms | ~56ms  |
-| gorilla/mux (0.2K) | ~4ms   | ~46ms | ~1ms  | ~45ms | ~53ms  |
-| clap (7.2K)        | ~82ms  | ~46ms | ~14ms | ~61ms | ~135ms |
-| hugo (11.5K)       | ~129ms | ~46ms | ~26ms | ~71ms | ~218ms |
-
-\* First query after process start, including model-load warm-up (~180ms total embedder initialization).
-
-What moved the numbers:
-
-- **Exact-size embedding batches.** Embedding is batched for tokenizer efficiency, but a padded batch could re-read stale rows and produce NaN chunks. Batches are now exactly the size of the pending items, which made single queries land at ~45ms and bulk indexing at roughly 5ms per document (the previously reported ~250ms-per-query path is gone).
-- **Lazy keyword-statistics cache.** The BM25 keyword half used to re-tokenize and recount every indexed chunk on every query. Statistics are now computed once per index load and reused; a query into hugo (11,500 chunks) searches in ~26ms and clap (7,200 chunks) in ~14ms.
-- **Deterministic parallel chunk extraction.** Chunking now runs on a bounded worker pool (default: min(CPU count, 8), capped at 64) with the results merged back in scan order — chunk IDs are identical whether extraction is parallel or serial. This mostly speeds up indexing big trees, where tree-sitter was the bottleneck.
-- **Single-pass file scanning.** The file-type, NUL-binary, and minified-line checks now happen in one read instead of opening each file multiple times; the `.git` filesystem is also skipped in one pass instead of re-walked.
-
-A full run of the eval harness (load five repos + 173 queries) takes ~10s wall time and peaks around 288 MB RSS in a single process. The machinery for reproducing this — and for A/B-ing the next change you make — lives in `scratch/` (`perf_bench.go` for latency/RSS, `ab_verify.go` to prove rankings didn't change). See `scratch/perf_report.json` and `scratch/logs/*.log` for the raw measurements.
-
----
-
-## License
-
-MIT. See `LICENSE`.
-
----
-
-## Installation
+## Quickstart
 
 ### Prerequisites
+- Go 1.22+
+- ONNX Runtime (`brew install onnxruntime` on macOS)
+- An ONNX embedding model (like CodeMiniLM or Nomic Embed v2)
 
-- **Go 1.22 or newer** (the module targets `go 1.26`).
-- **ONNX Runtime shared library.** On macOS: `brew install onnxruntime`. The code currently locates the library via a Homebrew Cellar path in `pkg/embedder/embedder.go`, so if you install a different version you may need to point it at your `libonnxruntime.dylib`.
-- **An embedding model.** The repo ships with no model checked in (they're large and gitignored). The CLI expects one at `scratch/code_minilm/model_quantized.onnx` with `scratch/code_minilm/tokenizer.json`. The tested model is **CodeMiniLM** (`isuruwijesiri/all-MiniLM-L6-v2-code-search-512` on Hugging Face, 384-dim) — export it to ONNX and drop the two files in `scratch/code_minilm/`.
-- **Optional — Ollama** (`ollama serve`) for LLM-generated semantic descriptions at index time. Not required; without it the tool falls back to heuristic synthetic descriptions.
-
-### Build
+### Install & Build
 
 ```bash
 git clone https://github.com/BMWareSPEEDY/semsearch.git
@@ -124,214 +39,69 @@ cd semsearch
 go build -o semsearch .
 ```
 
-That's it — a single binary. The embedding model, index, and search all run locally.
-
----
-
-## Quickstart
-
-### 1. Index a repo
+### Usage
 
 ```bash
-./semsearch index /path/to/your/code
-```
+# Index current repository
+./semsearch index .
 
-Without Ollama running, add `--no-llm` (or just accept the automatic fallback). The index is written to `.semsearch/` inside the target directory.
+# Fast index (skip local LLM description generation)
+./semsearch index . --no-llm
 
-### 2. Search in plain English
+# Search in natural language
+./semsearch "where do we handle JWT authentication and validation"
 
-```bash
-./semsearch "scanner honors gitignore and skips node_modules"
-```
+# Search code only or docs only
+./semsearch "markdown rendering" --code-only
+./semsearch "setup instructions" --docs-only
 
-Real output, searching semsearch's own codebase:
-
-```
-Search Results for query: 'scanner honors gitignore and skips node_modules'
-==================================================
-
-1. pkg/scanner/scanner.go:57-85 (score: 0.6864)
---------------------------------------------------
-   // [Package: scanner | File: scanner.go | Symbol: NewFileScanner | Kind: function]
-   func NewFileScanner(rootDir string) (*FileScanner, error) {
-   	abs...
-
-2. docs/getting-started.md:68-74 (score: 0.6162)
---------------------------------------------------
-   ## What's ignored
-
-   The scanner skips: `.git`, `node_modules`, `dist`, `build`, `target`,
-   `vendor`, hidden dotfiles, binary files (NUL-byte sniff), ...
-
-3. pkg/chunker/ast_chunker.go:157-218 (score: 0.4890)
---------------------------------------------------
-   // [Package: chunker | File: ast_chunker.go | Symbol: walkAST | Kind: function]
-   func (a *ASTChunker) walkAST(filePath string, node *sitter.Node, li...
-==================================================
-```
-
-The file you actually wanted — `pkg/scanner/scanner.go` — is right at the top, even though your query shared almost no literal words with the code. Each result gives you the file, the line range, and a score so you can judge the match yourself.
-
-Jump straight into your editor with `--editor code` (or `vim`/`subl`), or add `--context 5` to see surrounding lines.
-
-### 3. Serve it over HTTP
-
-```bash
+# Start local HTTP server
 ./semsearch serve --port 1921
-```
 
-Binds to `127.0.0.1` only, by default. Then:
-
-```bash
-curl "http://127.0.0.1:1921/api/search?q=skip+binary+files&top=3"
-```
-
-### 4. Other useful commands
-
-```bash
-./semsearch status                  # index stats: model, chunk count, last indexed
-./semsearch history                 # past queries and files you opened from them
-./semsearch watch                   # keep the index fresh as you edit (incremental)
-./semsearch index . --no-llm        # fast indexing without Ollama descriptions
+# Watch mode (updates index on file changes)
+./semsearch watch
 ```
 
 ---
 
-## CLI Reference
+## Benchmarks & Accuracy
 
-| Command / flag | Description |
-|----------------|-------------|
-| `semsearch index [path]` | Build or rebuild the index for a directory (default: current) |
-| `  --no-llm` | Skip LLM description generation; fall back to heuristic synthetic descriptions |
-| `semsearch [path] <query>` | Search an indexed codebase with a natural-language query |
-| `  -t, --top N` | Number of results to return (default 5) |
-| `  -m, --min-score X` | Drop results below a similarity score threshold |
-| `  -c, --context N` | Print N lines of surrounding context around each match |
-| `  -e, --editor APP` | Open the top result in an editor (`code`, `vim`/`nvim`, `subl`) |
-| `  --code-only` | Search implementation files only (excludes Markdown/docs) |
-| `  --docs-only` | Search documentation files only |
-| `  -j, --json` | Output results as JSON |
-| `semsearch serve [path]` | Start the local HTTP API |
-| `  -p, --port N` | Port to bind (default 1921, always `127.0.0.1`) |
-| `semsearch watch [path]` | Incrementally re-index changed files (fsnotify, 500ms debounce) |
-| `semsearch history [path]` | Show past queries and opened results |
-| `semsearch status [path]` | Show index stats |
+Tested across 5 popular open source repositories against 173 test queries with known ground truth files:
 
----
-
-## HTTP API Reference
-
-All endpoints bind to `127.0.0.1`. `GET` requests, JSON responses.
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/search?q=<query>&top=<n>` | General search (also `/search`) |
-| `GET /api/code?q=<query>` | Code-only search (also `/api/search?mode=code`) |
-| `GET /api/docs?q=<query>` | Docs-only search (also `/api/search?mode=docs`) |
-| `GET /api/status` | Index status: chunks, files, model (also `/health`) |
-
-Query parameters: `q` or `query` (required), `top` or `limit`, and `mode` (`code`|`docs`) or `code_only=true` / `docs_only=true`.
-
-Example:
-
-```bash
-curl "http://127.0.0.1:1921/api/search?q=retry+failed+api+requests&top=2"
-```
-
-```json
-{
-  "query": "retry failed api requests",
-  "results": [
-    {
-      "chunk": {
-        "id": 128,
-        "file_path": "src/http/client.go",
-        "symbol_name": "resilientFetch",
-        "kind": "function_declaration",
-        "line_start": 84,
-        "line_end": 102,
-        "content_hash": "1a2b3c4d",
-        "content": "...",
-        "description": "...",
-        "preview": "func resilientFetch(url string, opts Options) { ..."
-      },
-      "score": 0.77
-    }
-  ]
-}
-```
+| Repo | Chunks | Top-5 Hit Rate |
+|---|---|---|
+| `gin-gonic/gin` | ~890 | 41/42 (98%) |
+| `spf13/cobra` | ~520 | 27/27 (100%) |
+| `gorilla/mux` | ~165 | 25/25 (100%) |
+| `clap-rs/clap` | ~7,250 | 31/40 (78%) |
+| `gohugoio/hugo` | ~11,500 | 31/39 (79%) |
+| **Total** | **~20,000** | **~155/173 (90%)** |
 
 ---
 
 ## Configuration
 
-Everything is tunable through environment variables; there is no config file.
+These environment variables can be used to tweak behavior:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `SEMSEARCH_LLM_MODEL` | `qwen3.5:0.8b` | Ollama model used to generate chunk descriptions |
-| `SEMSEARCH_LLM_CONCURRENCY` | `4` | Parallel LLM description workers |
-| `SEMSEARCH_MIN_DESC_LINES` | `30` | Only chunks with at least this many lines get an LLM description |
-| `SEMSEARCH_MAX_LEN` | `128` | Tokenizer max sequence length (32–512) |
-| `SEMSEARCH_BATCH_SIZE` | `32` (`16` for models with dim > 512) | Embedder batch size (1–512) |
-| `SEMSEARCH_CHUNK_WORKERS` | `min(CPU count, 8)`, max `64` | Parallel chunk-extraction workers (1–64) |
-| `SEMSEARCH_SEM_WEIGHT` | `0.65` | Weight of semantic similarity vs. keyword signal in ranking (CLI) |
-| `SEMSEARCH_FUSION` | *(unset)* | Alternative fusion strategies for experimentation: `rrf`, `mult`, `avg` |
-
-Reranker tuning knobs (used during eval; defaults shown): `SYM=0.10`, `PATW=0.0`, `CONT=0.01`, `STABW=0.0`, `SEG=0`, and `MFD` — per-file dedup mode, default `1` (collapse the shortlist to the best chunk per file before boosting), with `2` for dedup after boosting and `0` to disable. You almost certainly don't need these — they exist because finding the right boost weights was a measured, iterative process (`scratch/reranker-tuning-log.md`).
+| Variable | Default | Description |
+|---|---|---|
+| `SEMSEARCH_LLM_MODEL` | `qwen3.5:0.8b` | Ollama model for chunk descriptions |
+| `SEMSEARCH_LLM_CONCURRENCY` | `4` | Parallel workers for generating descriptions |
+| `SEMSEARCH_SEM_WEIGHT` | `0.65` | Weight between semantic similarity and keyword score |
+| `SEMSEARCH_BATCH_SIZE` | `32` | Batch size during embedding inference |
+| `SEMSEARCH_CHUNK_WORKERS` | `min(CPU, 8)` | Worker count for parallel AST chunking |
 
 ---
 
-## Architecture & Internals
+## Documentation
 
-A deeper write-up lives in [`docs/architecture.md`](docs/architecture.md). The short version:
-
-```
-index:  scan → chunk (tree-sitter / markdown / sliding window)
-              → embed (code vector + description vector per chunk)
-              → save (.semsearch/manifest.json + vectors.bin)
-search: embed query → hybrid rank (cosine max-blend + BM25 + lexical)
-              → rerank (per-file dedup + term-overlap boosts) → top-N
-```
-
-The three pieces that matter most, and why:
-
-- **Dual vectors.** Every chunk stores an embedding of the raw code *and* an embedding of a generated natural-language description. A query scores against whichever it's closer to (`max`, not an average), so literal and conceptual matches can each win independently.
-- **Structural metadata.** Chunks carry a `// [Package: ... | File: ... | Symbol: ...]` prefix before embedding. This measurably improved results — the model sees *where* the code lives, not just what it says.
-- **Hybrid scoring.** Semantic cosine similarity is blended with a weighted BM25 keyword score. Pure vector search drifts on exact identifiers; pure keyword search misses concepts. The blend keeps both sharp.
+- [Architecture Overview](docs/architecture.md) — How the scanning, chunking, embedding, and reranking pipelines work.
+- [Getting Started](docs/getting-started.md) — Detailed setup, commands, and options.
+- [Evaluation](docs/evaluation.md) — Benchmark breakdown and testing methodology.
+- [Project Spec & Notes](docs/semsearch-project-spec.md) — Original plan and design decisions.
 
 ---
 
-## Known Limitations
+## License
 
-Being honest about where it's rough:
-
-- **Very large monorepos still index slowly.** Chunk extraction is now parallel, but description generation (when enabled) and embedding dominate, so indexing hundreds of thousands of files takes a while. Use `--no-llm` and index target subdirectories rather than the whole tree.
-- **Large mixed doc+code indexes have lower conceptual recall.** At 10K+ chunks (e.g. hugo), documentation and testdata chunks crowd out code results. `--code-only` helps; the eval numbers in the table above are the honest picture.
-- **Conceptual queries that share no words with the code are the hardest case.** The description vectors close most of the gap but not all of it.
-- **Small local model by design.** CodeMiniLM (384-dim) keeps everything fast and CPU-friendly; it's deliberately not a frontier model.
-- **The ONNX Runtime path is macOS/Homebrew-specific** and pinned to a versioned Cellar path. Porting to other platforms means relaxing that path.
-- **Search is brute-force cosine (no ANN index).** Fine for hundreds of thousands of chunks, slow at millions.
-- **LLM descriptions are optional and network-bound.** They need a local Ollama server; without one, heuristic descriptions are used and results differ slightly.
-
----
-
-## Roadmap
-
-Ideas that are deferred but natural next steps:
-
-- **Editor integration** (a VS Code extension that just calls the local API).
-- **Multi-repo / cross-project search.**
-- **ANN indexing** (HNSW) for very large codebases.
-- **Model swap for the LLM description step** — the description vectors are the strongest lever on conceptual recall, but they depend on a local Ollama server and a small model.
-
----
-
-## Acknowledgments
-
-- **Embedding model:** CodeMiniLM — `isuruwijesiri/all-MiniLM-L6-v2-code-search-512` on Hugging Face.
-- **ONNX Runtime** and the `yalue/onnxruntime_go` Go bindings — fast local inference with no Python runtime.
-- **tree-sitter** and its language grammars — the language-aware chunking this tool's quality depends on.
-- **`spf13/cobra`** (CLI), **`monochromegane/go-gitignore`** (ignore rules), **`fsnotify`** (watch mode).
-- **Ollama** — local LLM description generation, and the `qwen3.5` model behind it.
-- **The open-source projects used for evaluation:** gin, cobra, gorilla/mux, clap, and hugo — this tool is better for being tested against real code that nobody here wrote.
+MIT

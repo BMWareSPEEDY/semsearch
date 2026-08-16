@@ -1,92 +1,45 @@
-# semsearch — Architecture
+# Architecture
 
-`semsearch` is a local-first semantic code search engine written in Go. This
-document describes the runtime pipeline: scan → chunk → embed → index → search.
+Overview of how `semsearch` works under the hood.
 
 ```
 semsearch/
-├── main.go                 # CLI entry point (cobra commands)
-├── go.mod                  # Module: github.com/ashishpaliwal/semsearch
+├── main.go         # CLI commands (cobra)
 ├── pkg/
-│   ├── scanner/            # File system traversal with .gitignore/.semsearchignore
-│   ├── chunker/            # Sliding-window + AST + Markdown chunking
-│   ├── embedder/           # ONNX Runtime + tokenizer (embeddings)
-│   ├── indexer/            # Vector storage (manifest.json + vectors.bin) + cosine search
-│   ├── llm/                # Ollama description generation (concurrent, cached)
-│   ├── reranker/           # Reranking
-│   ├── watcher/            # Incremental re-indexing on file changes
-│   └── history/            # Query history persistence
-└── scratch/                # Eval harness, models, logs (partly gitignored)
+│   ├── scanner/    # Walks folders, handles .gitignore / .semsearchignore
+│   ├── chunker/    # AST parsing (tree-sitter), markdown sections, sliding window
+│   ├── embedder/   # ONNX Runtime + tokenization
+│   ├── indexer/    # Vector storage (manifest.json + vectors.bin) and similarity search
+│   ├── llm/        # Optional Ollama summaries for chunks (cached)
+│   ├── reranker/   # Result scoring, per-file dedup, keyword boost
+│   ├── watcher/    # File watcher for incremental re-indexing
+│   └── history/    # Stores recent queries
 ```
 
-## Data flow
+---
 
-### Indexing
-1. **Scan** — `pkg/scanner` walks the tree, honours `.gitignore` /
-   `.semsearchignore`, and skips hidden dirs, binary files (NUL sniff), and
-   minified bundles (line > 20KB).
-2. **Chunk** — `pkg/chunker` splits files:
-   - `.go/.py/.js/.ts`: AST chunking via tree-sitter (functions, methods,
-     structs/classes, types), capped at 80 lines each, with a structural
-     metadata prefix (`// [Package | File | Symbol | Kind]`).
-   - Markdown: header-based section chunks.
-   - Everything else: sliding window (30 lines, step 20).
-3. **Embed** — `pkg/embedder` runs batches through ONNX Runtime. Vectors are
-   mean-pooled and L2-normalized. Each chunk gets a code vector and a
-   description vector (from the LLM description, or the code vector when the
-   chunk is small / LLM skipped).
-4. **Save** — `pkg/indexer` writes `.semsearch/manifest.json` (metadata) and
-   `.semsearch/vectors.bin` (flat `[]float32`, 768 × 4 bytes = 3KB/vector).
+## How It Works
 
-### Searching
-1. Embed the query with the search_query prefix.
-2. Brute-force cosine similarity over all vectors (SIMD), fused with a small
-   lexical/semantic weighting (semantic weight 0.65 by default).
-3. Rerank top-30 → top-5 (`pkg/reranker`): collapse to the best chunk per
-   file, then apply tuned symbol/path/content term-overlap boosts
-   (`SYM=0.10`, `PATW=0`, `CONT=0.01`).
-4. Present file:line ranges; optionally open in an editor.
+### 1. Indexing
+- **Scan:** `pkg/scanner` walks through directories, skips `.git`, `node_modules`, binaries, minified files, and anything ignored by `.gitignore` or `.semsearchignore`.
+- **Chunk:** `pkg/chunker` breaks source code down into clean logical blocks:
+  - Tree-sitter for Go, Python, JS/TS, Rust, etc. (functions, methods, classes).
+  - Header-based splitting for Markdown.
+  - Sliding-window (30 lines with overlap) as fallback for other files.
+- **Embed:** Chunks get embedded with an ONNX model (CodeMiniLM or Nomic). If Ollama is running, larger chunks also get a short natural language description generated and embedded as a second vector.
+- **Save:** Writes `.semsearch/manifest.json` (chunk metadata, file paths, line ranges) and `.semsearch/vectors.bin` (raw float32 vectors).
 
-## LLM descriptions (optional)
+### 2. Searching
+- Embeds the search query using the same ONNX model.
+- Calculates cosine similarity against all indexed vectors.
+- Blends vector similarity with BM25 keyword matching (default 65% semantic, 35% keyword).
+- Reranks results: deduplicates multiple chunks from the exact same file to avoid clutter, applies a slight boost for matching identifiers or paths, and returns the top matches with snippets and line numbers.
 
-`pkg/llm` generates natural-language descriptions for larger chunks (>= 30
-lines by default) via a local Ollama model (`qwen3.5:0.8b`). Generation is
-concurrent (`SEMSEARCH_LLM_CONCURRENCY`, default 4) and hash-gated through a
-per-index cache (`.semsearch/desc_cache.json`), so re-indexing only describes
-changed chunks. Description vectors help conceptual queries; `--no-llm` skips
-the LLM and falls back to heuristic synthetic descriptions instead. Note that
-`codeOnly` / `docsOnly` filters search by **file type** (Markdown/doc chunks
-versus code chunks) and does not disable description-vector similarity — code
-chunks are still scored with `max(codeSim, descSim)` from whichever
-description vectors the index contains.
+---
 
-## Key design choices
+## Design Choices
 
-- **Code-only filtering is by file type, not vector source**: dual vectors
-  (code + desc) are stored, and `codeOnly` excludes Markdown/doc chunks from
-  search while still applying description-vector similarity (`max(code, desc)`)
-  to code chunks. This means the LLM description axis is always active for code
-  regardless of the `codeOnly`/`docsOnly` filter, and `--no-llm` (synthetic
-  descriptions) is a distinct index variant rather than an equivalent one.
-- **Flat vector store**: no ANN index yet; search is O(n) per query, fine for
-  hundreds of thousands of chunks, slow at millions.
-- **Structural metadata prefix**: prepending package/file/symbol context to
-  chunks measurably helps the embedding model (see docs/plan.md for the
-  rationale and earlier ablation numbers).
-
-## Scalability notes
-
-- Chunk extraction is parallel (bounded worker pool, default `min(CPU, 8)`,
-  capped at 64, results merged back in scan order so chunk IDs are
-  deterministic). Embedding and LLM description generation are still the
-  bottleneck for very large monorepos.
-- Keyword statistics (tokens / document frequency / average length for BM25)
-  are computed lazily once per index load and cached, so query cost is not
-  re-paying tokenization of the whole index.
-- Embedding batches are exact-size (never padded with stale rows); batch size
-  is tunable via `SEMSEARCH_BATCH_SIZE` (default 32, 16 for models with dim >
-  512).
-- LLM description generation is network-bound on Ollama.
-- For large repos: prefer `--no-llm` and index target subdirectories. See
-  `scratch/codex_indexing_log.md` for a real-world failure case and the
-  mitigations.
+- **Local-first:** Everything runs on your machine. No telemetry, no remote servers, no cloud embeddings.
+- **Dual vectors:** Storing both code embeddings and plain-English summary embeddings bridges the gap when searching for ideas ("handle payment webhook") against raw code implementations.
+- **Flat files over vector DBs:** At codebase scale (1k–50k chunks), flat float arrays in memory take just tens of milliseconds to scan through. Skipping an external database keeps setup trivial.
+- **Parallel processing:** Chunking runs across available CPU cores, and keyword stats are cached in memory after the first load so repeated searches stay fast (<50ms).
